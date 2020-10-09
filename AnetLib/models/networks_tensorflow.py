@@ -854,16 +854,15 @@ def generate_punet(generator_inputs, controls, generator_outputs_channels, ngf=6
         outputs = tuple(outputs)
         return outputs
 
-def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels, ngf=64, bayesian_dropout=False, dropout_prob=0.5, output_num=1, activation=tf.tanh, use_resize_conv=False, lr_inputs=None, lr_pos=0, revnet=None):
+def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels, ngf=64, bayesian_dropout=False, dropout_prob=0.5, output_num=1, activation=tf.tanh, use_resize_conv=False, lr_inputs=None, lr_pos=0, revnet=None, use_skip_connections=True):
     assert controls is not None
-    assert revnet is not None
     layers = []
 
     # encoder_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ngf]
     with tf.variable_scope("x_encoder_1"):
         if lr_inputs is not None and lr_pos == 0:
             generator_inputs = tf.concat([generator_inputs, lr_inputs], axis=3)
-        output = conv(generator_inputs, ngf, stride=2)
+        output = conv7x7(generator_inputs, ngf, stride=2)
         output = output + conv1x1(controls, ngf)
         if lr_inputs is not None and lr_pos == 1:
             layers.append( tf.concat([lr_inputs, output], axis=3))
@@ -874,10 +873,6 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
         ngf * 2, # encoder_2: [batch, 128, 128, ngf] => [batch, 64, 64, ngf * 2]
         ngf * 4, # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
         ngf * 8, # encoder_4: [batch, 32, 32, ngf * 4] => [batch, 16, 16, ngf * 8]
-        ngf * 8, # encoder_5: [batch, 16, 16, ngf * 8] => [batch, 8, 8, ngf * 8]
-        ngf * 8, # encoder_6: [batch, 8, 8, ngf * 8] => [batch, 4, 4, ngf * 8]
-        ngf * 8, # encoder_7: [batch, 4, 4, ngf * 8] => [batch, 2, 2, ngf * 8]
-        ngf * 8, # encoder_8: [batch, 2, 2, ngf * 8] => [batch, 1, 1, ngf * 8]
     ]
 
     for out_channels in layer_specs:
@@ -894,29 +889,25 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
             else:
                 layers.append(output)
 
+
     in_1, in_2 = tf.split(layers[-1], num_or_size_splits=2, axis=3)
     in_1 = tf.identity(in_1, name="revnet_input_1")
     in_2 = tf.identity(in_2, name="revnet_input_2")
-    #layers.append((in_1, in_2))
 
     revnet_input = (in_1, in_2)
 
-    revnet_output = revnet.backward_pass(revnet_input)
-
-    #layers.append(revnet_output)
+    if revnet is not None:
+        revnet_output = revnet.forward_pass(revnet_input)
+    else:
+        revnet_output = revnet_input
 
     out_1, out_2 = revnet_output
     out_1 = tf.identity(out_1, name="revnet_output_1")
     out_2 = tf.identity(out_2, name="revnet_output_2")
-    #layers.append(tf.concat([out_1, out_2], 3))
     output = tf.concat([out_1, out_2], 3)
 
 
     layer_specs = [
-        (ngf * 8, dropout_prob),   # decoder_8: [batch, 1, 1, ngf * 8] => [batch, 2, 2, ngf * 8 * 2]
-        (ngf * 8, dropout_prob),   # decoder_7: [batch, 2, 2, ngf * 8 * 2] => [batch, 4, 4, ngf * 8 * 2]
-        (ngf * 8, dropout_prob),   # decoder_6: [batch, 4, 4, ngf * 8 * 2] => [batch, 8, 8, ngf * 8 * 2]
-        (ngf * 8, None),   # decoder_5: [batch, 8, 8, ngf * 8 * 2] => [batch, 16, 16, ngf * 8 * 2]
         (ngf * 4, None),   # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
         (ngf * 2, None),   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
         (ngf, None),       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
@@ -931,7 +922,10 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
                 # since it is directly connected to the skip_layer
                 input = output
             else:
-                input = tf.concat([layers[-1], layers[skip_layer]], axis=3)
+                if(use_skip_connections):
+                    input = tf.concat([layers[-1], layers[skip_layer]], axis=3)
+                else:
+                    input = layers[-1]
 
             rectified = tf.nn.relu(input)
             # [batch, in_height, in_width, in_channels] => [batch, in_height*2, in_width*2, out_channels]
@@ -952,7 +946,10 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
     if output_num == 1:
         # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
         with tf.variable_scope("y_decoder_1"):
-            input = tf.concat([layers[-1], layers[0]], axis=3)
+            if (use_skip_connections):
+                input = tf.concat([layers[-1], layers[0]], axis=3)
+            else:
+                input = layers[-1]
             rectified = tf.nn.relu(input)
             if use_resize_conv:
                 output = resizeconv(rectified, generator_outputs_channels)
@@ -967,8 +964,11 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
         outputs = []
         for i in range(output_num):
             # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
-            with tf.variable_scope("decoder_1_"+str(i)):
-                input = tf.concat([layer_1, layers[0]], axis=3)
+            with tf.variable_scope("y_decoder_1_"+str(i)):
+                if (use_skip_connections):
+                    input = tf.concat([layers[-1], layers[0]], axis=3)
+                else:
+                    input = layers[-1]
                 rectified = tf.nn.relu(input)
                 if use_resize_conv:
                     output = resizeconv(rectified, generator_outputs_channels)
@@ -980,16 +980,15 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
         outputs = tuple(outputs)
         return outputs
 
-def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs_channels, ngf=64, bayesian_dropout=False, dropout_prob=0.5, output_num=1, activation=tf.tanh, use_resize_conv=False, lr_inputs=None, lr_pos=0, revnet=None):
+def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs_channels, ngf=64, bayesian_dropout=False, dropout_prob=0.5, output_num=1, activation=tf.tanh, use_resize_conv=False, lr_inputs=None, lr_pos=0, revnet=None, use_skip_connections=True):
     assert controls is not None
-    assert revnet is not None
     layers = []
 
     # encoder_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ngf]
     with tf.variable_scope("y_encoder_1"):
         if lr_inputs is not None and lr_pos == 0:
             generator_inputs = tf.concat([generator_inputs, lr_inputs], axis=3)
-        output = conv(generator_inputs, ngf, stride=2)
+        output = conv7x7(generator_inputs, ngf, stride=2)
         output = output + conv1x1(controls, ngf)
         if lr_inputs is not None and lr_pos == 1:
             layers.append( tf.concat([lr_inputs, output], axis=3))
@@ -1000,10 +999,6 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
         ngf * 2, # encoder_2: [batch, 128, 128, ngf] => [batch, 64, 64, ngf * 2]
         ngf * 4, # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
         ngf * 8, # encoder_4: [batch, 32, 32, ngf * 4] => [batch, 16, 16, ngf * 8]
-        ngf * 8, # encoder_5: [batch, 16, 16, ngf * 8] => [batch, 8, 8, ngf * 8]
-        ngf * 8, # encoder_6: [batch, 8, 8, ngf * 8] => [batch, 4, 4, ngf * 8]
-        ngf * 8, # encoder_7: [batch, 4, 4, ngf * 8] => [batch, 2, 2, ngf * 8]
-        ngf * 8, # encoder_8: [batch, 2, 2, ngf * 8] => [batch, 1, 1, ngf * 8]
     ]
 
     for out_channels in layer_specs:
@@ -1020,29 +1015,25 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
             else:
                 layers.append(output)
 
+
     in_1, in_2 = tf.split(layers[-1], num_or_size_splits=2, axis=3)
-    in_1 = tf.identity(in_1, name="revnet_backward_input_1")
-    in_2 = tf.identity(in_2, name="revnet_backward_input_2")
-    #layers.append((in_1, in_2))
+    in_1 = tf.identity(in_1, name="backward_revnet_input_1")
+    in_2 = tf.identity(in_2, name="backward_revnet_input_2")
 
     revnet_input = (in_1, in_2)
 
-    revnet_output = revnet.backward_pass(revnet_input)
-
-    #layers.append(revnet_output)
+    if revnet is not None:
+        revnet_output = revnet.backward_pass(revnet_input)
+    else:
+        revnet_output = revnet_input
 
     out_1, out_2 = revnet_output
-    out_1 = tf.identity(out_1, name="revnet_backward_output_1")
-    out_2 = tf.identity(out_2, name="revnet_backward_output_2")
-    #layers.append(tf.concat([out_1, out_2], 3))
+    out_1 = tf.identity(out_1, name="backward_revnet_output_1")
+    out_2 = tf.identity(out_2, name="backward_revnet_output_2")
     output = tf.concat([out_1, out_2], 3)
 
 
     layer_specs = [
-        (ngf * 8, dropout_prob),   # decoder_8: [batch, 1, 1, ngf * 8] => [batch, 2, 2, ngf * 8 * 2]
-        (ngf * 8, dropout_prob),   # decoder_7: [batch, 2, 2, ngf * 8 * 2] => [batch, 4, 4, ngf * 8 * 2]
-        (ngf * 8, dropout_prob),   # decoder_6: [batch, 4, 4, ngf * 8 * 2] => [batch, 8, 8, ngf * 8 * 2]
-        (ngf * 8, None),   # decoder_5: [batch, 8, 8, ngf * 8 * 2] => [batch, 16, 16, ngf * 8 * 2]
         (ngf * 4, None),   # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
         (ngf * 2, None),   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
         (ngf, None),       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
@@ -1057,7 +1048,10 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
                 # since it is directly connected to the skip_layer
                 input = output
             else:
-                input = tf.concat([layers[-1], layers[skip_layer]], axis=3)
+                if (use_skip_connections):
+                    input = tf.concat([layers[-1], layers[skip_layer]], axis=3)
+                else:
+                    input = layers[-1]
 
             rectified = tf.nn.relu(input)
             # [batch, in_height, in_width, in_channels] => [batch, in_height*2, in_width*2, out_channels]
@@ -1078,7 +1072,10 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
     if output_num == 1:
         # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
         with tf.variable_scope("x_decoder_1"):
-            input = tf.concat([layers[-1], layers[0]], axis=3)
+            if (use_skip_connections):
+                input = tf.concat([layers[-1], layers[0]], axis=3)
+            else:
+                input = layers[-1]
             rectified = tf.nn.relu(input)
             if use_resize_conv:
                 output = resizeconv(rectified, generator_outputs_channels)
@@ -1093,8 +1090,11 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
         outputs = []
         for i in range(output_num):
             # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
-            with tf.variable_scope("decoder_1_"+str(i)):
-                input = tf.concat([layer_1, layers[0]], axis=3)
+            with tf.variable_scope("x_decoder_1_"+str(i)):
+                if (use_skip_connections):
+                    input = tf.concat([layers[-1], layers[0]], axis=3)
+                else:
+                    input = layers[-1]
                 rectified = tf.nn.relu(input)
                 if use_resize_conv:
                     output = resizeconv(rectified, generator_outputs_channels)
@@ -1439,6 +1439,7 @@ def create_pix2pix_model(inputs, targets, controls, channel_masks, ngf=64, ndf=6
                          use_squirrel=False, squirrel_weight=20.0, lr_loss_mode='lr_inputs'):
     with tf.variable_scope("generator") as scope:
         out_channels = int(targets.get_shape()[-1])
+        revnet = ReversibleNet(10, ngf * 8 / 2)
         if use_punet:
             assert control_nc >0
             if control_classes is not None and control_classes > 0 :
@@ -1477,7 +1478,11 @@ def create_pix2pix_model(inputs, targets, controls, channel_masks, ngf=64, ndf=6
         else:
             output_num = 1
             if use_punet:
-                outputs = generate_punet(inputs, controls, out_channels, ngf, bayesian_dropout=bayesian_dropout, dropout_prob=dropout_prob, output_num=output_num, use_resize_conv=use_resize_conv)
+                #outputs = generate_punet(inputs, controls, out_channels, ngf, bayesian_dropout=bayesian_dropout, dropout_prob=dropout_prob, output_num=output_num, use_resize_conv=use_resize_conv)
+                outputs = generate_revgan_punet(inputs, controls, out_channels, ngf, bayesian_dropout=bayesian_dropout,
+                                                dropout_prob=dropout_prob, output_num=output_num,
+                                                use_resize_conv=use_resize_conv, revnet=revnet,
+                                                use_skip_connections=True)
             else:
                 outputs = generate_unet(inputs, out_channels, ngf, bayesian_dropout=bayesian_dropout, dropout_prob=dropout_prob, output_num=output_num, use_resize_conv=use_resize_conv)
             sigma = None
@@ -1671,7 +1676,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
     with tf.name_scope("generator"):
         with tf.variable_scope("generator", reuse=tf.AUTO_REUSE) as scope:
             out_channels = int(targets.get_shape()[-1])
-            revnet = ReversibleNet(rev_layer_num, ngf*2)
+            revnet = ReversibleNet(rev_layer_num, ngf*8/2)
             if use_punet:
                 assert control_nc > 0
                 if control_classes is not None and control_classes > 0:
@@ -1707,33 +1712,53 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             if output_uncertainty:
                 output_num = 2
 
-                outputs, log_sigma_square = generate_revgan_generator(inputs, out_channels, revnet, ngf,
+                """outputs, log_sigma_square = generate_revgan_generator(inputs, out_channels, revnet, ngf,
                                                                       dropout_prob=dropout_prob, output_num=output_num,
-                                                                      activation=None, use_resize_conv=use_resize_conv)
+                                                                      activation=None, use_resize_conv=use_resize_conv)"""
+
+                outputs, log_sigma_square = generate_revgan_punet(inputs, controls, out_channels, ngf, bayesian_dropout=bayesian_dropout,
+                                         dropout_prob=dropout_prob, output_num=output_num, activation=None,
+                                         use_resize_conv=use_resize_conv, revnet=revnet, use_skip_connections=True)
+
                 # apply activation
                 outputs, log_sigma_square = tf.tanh(outputs), log_sigma_square
                 sigma = tf.sqrt(tf.exp(log_sigma_square))
             else:
                 output_num = 1
 
-                outputs = generate_revgan_generator(inputs, out_channels, revnet, ngf,
+                """outputs = generate_revgan_generator(inputs, out_channels, revnet, ngf,
                                                     dropout_prob=dropout_prob, output_num=output_num,
-                                                    use_resize_conv=use_resize_conv)
+                                                    use_resize_conv=use_resize_conv)"""
+
+                outputs = generate_revgan_punet(inputs, controls, out_channels, ngf, bayesian_dropout=bayesian_dropout,
+                                                dropout_prob=dropout_prob, output_num=output_num,
+                                                use_resize_conv=use_resize_conv, revnet=revnet,
+                                                use_skip_connections=True)
+
                 sigma = None
 
-            backward_outputs = generate_revgan_generator_backward(targets, lr_nc, revnet, ngf,
+            """backward_outputs = generate_revgan_generator_backward(targets, lr_nc, revnet, ngf,
                                                                       dropout_prob=dropout_prob, output_num=output_num,
                                                                        use_resize_conv=use_resize_conv)
-            backward_outputs_lr = backward_outputs[:, :, :, -lr_nc:]
+            backward_outputs_lr = backward_outputs[:, :, :, -lr_nc:]"""
 
-            print(outputs.shape)
-            print(outputs[:, :, :, 0:1].shape)
-            print(targets.shape)
+            backward_outputs_lr = generate_revgan_backward_punet(targets, controls, lr_nc, ngf, bayesian_dropout=bayesian_dropout,
+                                            dropout_prob=dropout_prob, output_num=1,
+                                            use_resize_conv=use_resize_conv, revnet=revnet, use_skip_connections=True)
 
-            backward_outputs_fake = generate_revgan_generator_backward(outputs[:, :, :, -lr_nc:], lr_nc, revnet, ngf,
+
+
+            """backward_outputs_fake = generate_revgan_generator_backward(outputs[:, :, :, -lr_nc:], lr_nc, revnet, ngf,
                                                                   dropout_prob=dropout_prob, output_num=output_num,
                                                                   use_resize_conv=use_resize_conv)
-            backward_outputs_fake_lr = backward_outputs_fake[:, :, :, -lr_nc:]
+            backward_outputs_fake_lr = backward_outputs_fake[:, :, :, -lr_nc:]"""
+
+            backward_outputs_fake_lr = generate_revgan_backward_punet(outputs, controls, lr_nc, ngf,
+                                                              bayesian_dropout=bayesian_dropout,
+                                                              dropout_prob=dropout_prob, output_num=1,
+                                                              use_resize_conv=use_resize_conv, revnet=revnet,
+                                                              use_skip_connections=True)
+
 
             """x_auto_outputs = generate_revgan_x_autoencoder(inputs, inputs.shape[-1], revnet, ngf,
                                                            dropout_prob=dropout_prob, output_num=output_num,
@@ -1982,11 +2007,15 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             dec_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
 
             # manual gradients for revnet
-            (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_forward_pass(rev_out_1_var,
-                                                                                             rev_out_2_var,
-                                                                                             rev_out_1_grad,
-                                                                                             rev_out_2_grad)
-            rev_grads_and_vars = np.array(rev_grads_and_vars)
+            if revnet is not None:
+                (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_forward_pass(rev_out_1_var,
+                                                                                                 rev_out_2_var,
+                                                                                                 rev_out_1_grad,
+                                                                                                 rev_out_2_grad)
+                rev_grads_and_vars = np.array(rev_grads_and_vars)
+            else:
+                (dy1, dy2) = (rev_out_1_grad, rev_out_2_grad)
+                rev_grads_and_vars = np.array([])
 
             # gradients for encoder part
             enc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/x_encoder")]
@@ -2019,11 +2048,15 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             dec_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
 
             # manual gradients for revnet
-            (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_forward_pass(rev_out_1_var,
-                                                                                             rev_out_2_var,
-                                                                                             rev_out_1_grad,
-                                                                                             rev_out_2_grad)
-            rev_grads_and_vars = np.array(rev_grads_and_vars)
+            if revnet is not None:
+                (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_forward_pass(rev_out_1_var,
+                                                                                                 rev_out_2_var,
+                                                                                                 rev_out_1_grad,
+                                                                                                 rev_out_2_grad)
+                rev_grads_and_vars = np.array(rev_grads_and_vars)
+            else:
+                (dy1, dy2) = (rev_out_1_grad, rev_out_2_grad)
+                rev_grads_and_vars = np.array([])
 
             # gradients for encoder part
             enc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/y_encoder")]
@@ -2103,8 +2136,8 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                 'gen_loss_SSIM': gen_loss_SSIM, 'gen_loss_squirrel': bw_gen_loss_total,
                 'squirrel_discrim_loss': lr_discrim_loss, 'gen_loss_GAN': gen_loss_GAN},
         uncertainty=sigma,
-        squirrel_discrim_train= bw_gen_train,
-        train=tf.group(update_losses, incr_global_step),
+        squirrel_discrim_train= lr_discrim_train,
+        train=tf.group(update_losses, incr_global_step, gen_train, bw_gen_train),
     )
 
 def setup_data_loader(data_source, enqueue_data, shuffle=True, batch_size=1, input_size=256, input_channel=1, target_channel=1, repeat=1, control_nc=0, use_mixup=False, seed=123):
