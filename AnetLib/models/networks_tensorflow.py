@@ -2009,7 +2009,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             dec_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
 
             # manual gradients for revnet
-            if revnet is not None:
+            if revnet is not None and rev_layer_num > 0:
                 (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_forward_pass(rev_out_1_var,
                                                                                                  rev_out_2_var,
                                                                                                  rev_out_1_grad,
@@ -2053,7 +2053,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             dec_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
 
             # manual gradients for revnet
-            if revnet is not None:
+            if revnet is not None and rev_layer_num > 0:
                 (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_forward_pass(rev_out_1_var,
                                                                                                  rev_out_2_var,
                                                                                                  rev_out_1_grad,
