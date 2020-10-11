@@ -862,7 +862,7 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
     with tf.variable_scope("x_encoder_1"):
         if lr_inputs is not None and lr_pos == 0:
             generator_inputs = tf.concat([generator_inputs, lr_inputs], axis=3)
-        output = conv7x7(generator_inputs, ngf, stride=2)
+        output = conv7x7(generator_inputs, ngf, stride=1)
         output = output + conv1x1(controls, ngf)
         if lr_inputs is not None and lr_pos == 1:
             layers.append( tf.concat([lr_inputs, output], axis=3))
@@ -952,9 +952,9 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
                 input = layers[-1]
             rectified = tf.nn.relu(input)
             if use_resize_conv:
-                output = resizeconv(rectified, generator_outputs_channels)
+                output = conv7x7(rectified, generator_outputs_channels, stride=1)
             else:
-                output = deconv(rectified, generator_outputs_channels)
+                output = conv7x7(rectified, generator_outputs_channels, stride=1)
             if activation:
                 output = activation(output)
             layers.append(output)
@@ -971,9 +971,9 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
                     input = layers[-1]
                 rectified = tf.nn.relu(input)
                 if use_resize_conv:
-                    output = resizeconv(rectified, generator_outputs_channels)
+                    output = conv7x7(rectified, generator_outputs_channels, stride=1)
                 else:
-                    output = deconv(rectified, generator_outputs_channels)
+                    output = conv7x7(rectified, generator_outputs_channels, stride=1)
                 if activation:
                     output = activation(output)
                 outputs.append(output)
@@ -984,11 +984,13 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
     assert controls is not None
     layers = []
 
+    print(generator_inputs.shape)
+
     # encoder_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ngf]
     with tf.variable_scope("y_encoder_1"):
         if lr_inputs is not None and lr_pos == 0:
             generator_inputs = tf.concat([generator_inputs, lr_inputs], axis=3)
-        output = conv7x7(generator_inputs, ngf, stride=2)
+        output = conv7x7(generator_inputs, ngf, stride=1)
         output = output + conv1x1(controls, ngf)
         if lr_inputs is not None and lr_pos == 1:
             layers.append( tf.concat([lr_inputs, output], axis=3))
@@ -1078,9 +1080,9 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
                 input = layers[-1]
             rectified = tf.nn.relu(input)
             if use_resize_conv:
-                output = resizeconv(rectified, generator_outputs_channels)
+                output = conv7x7(rectified, generator_outputs_channels, stride=1)
             else:
-                output = deconv(rectified, generator_outputs_channels)
+                output = conv7x7(rectified, generator_outputs_channels, stride=1)
             if activation:
                 output = activation(output)
             layers.append(output)
@@ -1097,9 +1099,9 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
                     input = layers[-1]
                 rectified = tf.nn.relu(input)
                 if use_resize_conv:
-                    output = resizeconv(rectified, generator_outputs_channels)
+                    output = conv7x7(rectified, generator_outputs_channels, stride=1)
                 else:
-                    output = deconv(rectified, generator_outputs_channels)
+                    output = conv7x7(rectified, generator_outputs_channels, stride=1)
                 if activation:
                     output = activation(output)
                 outputs.append(output)
@@ -2015,7 +2017,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                 rev_grads_and_vars = np.array(rev_grads_and_vars)
             else:
                 (dy1, dy2) = (rev_out_1_grad, rev_out_2_grad)
-                rev_grads_and_vars = np.array([])
+                rev_grads_and_vars = None
 
             # gradients for encoder part
             enc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/x_encoder")]
@@ -2025,7 +2027,10 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             enc_grads_and_vars = np.array(list(zip(enc_grads, enc_vars)))
 
             # combine all gradients in one list
-            gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
+            if rev_grads_and_vars is not None:
+                gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
+            else:
+                gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
             gen_grads_and_vars = gen_grads_and_vars.tolist()
 
             # apply gradients to graph
@@ -2056,7 +2061,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                 rev_grads_and_vars = np.array(rev_grads_and_vars)
             else:
                 (dy1, dy2) = (rev_out_1_grad, rev_out_2_grad)
-                rev_grads_and_vars = np.array([])
+                rev_grads_and_vars = None
 
             # gradients for encoder part
             enc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/y_encoder")]
@@ -2066,7 +2071,10 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             enc_grads_and_vars = np.array(list(zip(enc_grads, enc_vars)))
 
             # combine all gradients in one list
-            bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
+            if rev_grads_and_vars is not None:
+                bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
+            else:
+                bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
             bw_gen_grads_and_vars = bw_gen_grads_and_vars.tolist()
 
             # apply gradients to graph
