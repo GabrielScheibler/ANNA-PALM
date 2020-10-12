@@ -1437,7 +1437,6 @@ def create_pix2pix_model(inputs, targets, controls, channel_masks, ngf=64, ndf=6
                          use_squirrel=False, squirrel_weight=20.0, lr_loss_mode='lr_inputs'):
     with tf.variable_scope("generator") as scope:
         out_channels = int(targets.get_shape()[-1])
-        revnet = ReversibleNet(10, ngf * 8 / 2)
         if use_punet:
             assert control_nc >0
             if control_classes is not None and control_classes > 0 :
@@ -1476,11 +1475,7 @@ def create_pix2pix_model(inputs, targets, controls, channel_masks, ngf=64, ndf=6
         else:
             output_num = 1
             if use_punet:
-                #outputs = generate_punet(inputs, controls, out_channels, ngf, bayesian_dropout=bayesian_dropout, dropout_prob=dropout_prob, output_num=output_num, use_resize_conv=use_resize_conv)
-                outputs = generate_revgan_punet(inputs, controls, out_channels, ngf, bayesian_dropout=bayesian_dropout,
-                                                dropout_prob=dropout_prob, output_num=output_num,
-                                                use_resize_conv=use_resize_conv, revnet=revnet,
-                                                use_skip_connections=True)
+                outputs = generate_punet(inputs, controls, out_channels, ngf, bayesian_dropout=bayesian_dropout, dropout_prob=dropout_prob, output_num=output_num, use_resize_conv=use_resize_conv)
             else:
                 outputs = generate_unet(inputs, out_channels, ngf, bayesian_dropout=bayesian_dropout, dropout_prob=dropout_prob, output_num=output_num, use_resize_conv=use_resize_conv)
             sigma = None
@@ -1670,7 +1665,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                         bayesian_dropout=False, use_resize_conv=False, no_lsgan=False, dropout_prob=0.5,
                         gan_weight=1.0, l1_weight=40.0, lr=0.0002, beta1=0.5, lambda_tv=0, use_ssim=False,
                         use_punet=False, control_nc=0, control_classes=0, use_gaussd=False, lr_nc=0, lr_scale=1,
-                        use_squirrel=False, squirrel_weight=20.0, lr_loss_mode='lr_inputs', rev_layer_num=10):
+                        use_squirrel=False, squirrel_weight=20.0, lr_loss_mode='lr_inputs', rev_layer_num=10, use_skip_connections=False):
     with tf.name_scope("generator"):
         with tf.variable_scope("generator", reuse=tf.AUTO_REUSE) as scope:
             out_channels = int(targets.get_shape()[-1])
@@ -1710,13 +1705,9 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             if output_uncertainty:
                 output_num = 2
 
-                """outputs, log_sigma_square = generate_revgan_generator(inputs, out_channels, revnet, ngf,
-                                                                      dropout_prob=dropout_prob, output_num=output_num,
-                                                                      activation=None, use_resize_conv=use_resize_conv)"""
-
                 outputs, log_sigma_square = generate_revgan_punet(inputs, controls, out_channels, ngf, bayesian_dropout=bayesian_dropout,
                                          dropout_prob=dropout_prob, output_num=output_num, activation=None,
-                                         use_resize_conv=use_resize_conv, revnet=revnet, use_skip_connections=True)
+                                         use_resize_conv=use_resize_conv, revnet=revnet, use_skip_connections=use_skip_connections)
 
                 # apply activation
                 outputs, log_sigma_square = tf.tanh(outputs), log_sigma_square
@@ -1724,53 +1715,24 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             else:
                 output_num = 1
 
-                """outputs = generate_revgan_generator(inputs, out_channels, revnet, ngf,
-                                                    dropout_prob=dropout_prob, output_num=output_num,
-                                                    use_resize_conv=use_resize_conv)"""
-
                 outputs = generate_revgan_punet(inputs, controls, out_channels, ngf, bayesian_dropout=bayesian_dropout,
                                                 dropout_prob=dropout_prob, output_num=output_num,
                                                 use_resize_conv=use_resize_conv, revnet=revnet,
-                                                use_skip_connections=True)
+                                                use_skip_connections=use_skip_connections)
 
                 sigma = None
 
-            """backward_outputs = generate_revgan_generator_backward(targets, lr_nc, revnet, ngf,
-                                                                      dropout_prob=dropout_prob, output_num=output_num,
-                                                                       use_resize_conv=use_resize_conv)
-            backward_outputs_lr = backward_outputs[:, :, :, -lr_nc:]"""
-
             backward_outputs_lr = generate_revgan_backward_punet(targets, controls, lr_nc, ngf, bayesian_dropout=bayesian_dropout,
                                             dropout_prob=dropout_prob, output_num=1,
-                                            use_resize_conv=use_resize_conv, revnet=revnet, use_skip_connections=True)
+                                            use_resize_conv=use_resize_conv, revnet=revnet, use_skip_connections=use_skip_connections)
 
-
-
-            """backward_outputs_fake = generate_revgan_generator_backward(outputs[:, :, :, -lr_nc:], lr_nc, revnet, ngf,
-                                                                  dropout_prob=dropout_prob, output_num=output_num,
-                                                                  use_resize_conv=use_resize_conv)
-            backward_outputs_fake_lr = backward_outputs_fake[:, :, :, -lr_nc:]"""
 
             backward_outputs_fake_lr = generate_revgan_backward_punet(outputs, controls, lr_nc, ngf,
                                                               bayesian_dropout=bayesian_dropout,
                                                               dropout_prob=dropout_prob, output_num=1,
                                                               use_resize_conv=use_resize_conv, revnet=revnet,
-                                                              use_skip_connections=True)
+                                                              use_skip_connections=use_skip_connections)
 
-
-            """x_auto_outputs = generate_revgan_x_autoencoder(inputs, inputs.shape[-1], revnet, ngf,
-                                                           dropout_prob=dropout_prob, output_num=output_num,
-                                                            use_resize_conv=use_resize_conv)
-
-            y_auto_outputs = generate_revgan_y_autoencoder(targets, out_channels, revnet, ngf,
-                                                           dropout_prob=dropout_prob, output_num=output_num,
-                                                            use_resize_conv=use_resize_conv)
-            backward_outputs_lr = backward_outputs[:, :, :, -lr_nc:]
-            x_auto_outputs_lr = x_auto_outputs[:, :, :, -lr_nc:]"""
-
-    # with tf.name_scope("generator_reverse"):
-    #    with tf.variable_scope("generator", reuse=True) as scope:
-    #        outputs = generate_revgan_generator(inputs, out_channels, ngf, dropout_prob=dropout_prob, output_num=output_num, use_resize_conv=use_resize_conv)
 
     with tf.name_scope("discriminator_inputs"):
         _, h, w, _ = inputs.get_shape().as_list()
@@ -1847,27 +1809,8 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         else:
             lr_discrim_loss = tf.reduce_mean(-(tf.log(lr_predict_real + EPS) + tf.log(1 - lr_predict_fake + EPS)))
 
-    """with tf.name_scope("generator_x_cycle"):
-        # generate x_cycle ouput ????
-    with tf.name_scope("generator_y_cycle"):
-        # generate y_cycle output ????"""
-
-    # with tf.name_scope("generator_reverse"):
-    # generate reverse output
-
-    """if use_squirrel:
-        ndfs = ndf//8 if ndf//8>0 else 1
-        _squirrel_train, _squirrel_output_fetches = generate_squirrel_model(lr_inputs, outputs, targets, lr_scale=lr_scale, ndf=ndfs, lr=lr, beta1=beta1, dropout_prob=dropout_prob, lr_loss_mode=lr_loss_mode)
-        squirrel_discrim_train, squirrel_discrim_grads_and_vars = _squirrel_train
-        squirrel_discrim_loss, gen_loss_squirrel, squirrel_error_map, lr_predict_real, lr_predict_fake = _squirrel_output_fetches
-    else:
-        squirrel_discrim_train, squirrel_discrim_grads_and_vars = (None, ) * 2
-        squirrel_discrim_loss, gen_loss_squirrel, squirrel_error_map, lr_predict_real, lr_predict_fake = (None, ) * 5"""
-
     dp_outputs = deprocess(outputs)
     dp_targets = deprocess(targets)
-    #dp_xaoutputs = deprocess(x_auto_outputs_lr)
-    #dp_yaoutputs = deprocess(y_auto_outputs)
     dp_backward_outputs = deprocess(backward_outputs_lr)
     dp_backward_outputs_fake = deprocess(backward_outputs_fake_lr)
     dp_lr_input = deprocess(scaled_lr_inputs)
@@ -1877,10 +1820,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         gen_loss_L2 = None
         gen_loss_L1 = None
         gen_loss_SSIM = None
-        #xae_loss_total = None
-        #yae_loss_total = None
         bw_gen_loss_total = None
-        bw_fake_gen_loss_SSIM = None
         if not no_lsgan:
             if output_uncertainty:
                 # "VALID" mode in convolution only ever drops the right-most columns (or bottom-most rows).
@@ -1956,22 +1896,18 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         else:
             bw_gen_loss_GAN = tf.reduce_mean(-tf.log(lr_predict_fake + EPS))
 
-        #xae_loss_SSIM = tf_ms_ssim_l1_loss(dp_xaoutputs, dp_lr_input)
-        #yae_loss_SSIM = tf_ms_ssim_l1_loss(dp_yaoutputs, dp_targets)
-        bw_gen_loss_SSIM = tf_ms_ssim_l1_loss(dp_backward_outputs, dp_lr_input)
+        cond = tf.equal(tf.reduce_min(lr_inputs), tf.reduce_max(lr_inputs))
+        mask = tf.cond(cond, lambda: tf.constant(0.0), lambda: tf.constant(1.0))
+        bw_gen_loss_SSIM = mask * tf_ms_ssim_l1_loss(dp_backward_outputs, dp_lr_input)
 
-        #xae_loss_total = xae_loss_SSIM * l1_weight
-        #yae_loss_total = yae_loss_SSIM * l1_weight
-
-        bw_fake_gen_loss_SSIM = tf_ms_ssim_l1_loss(dp_backward_outputs_fake, dp_lr_input)
-
-        bw_gen_loss_total = bw_gen_loss_GAN * gan_weight + bw_gen_loss_SSIM * l1_weight
+        gen_loss_lr = tf_ms_ssim_l1_loss(dp_backward_outputs_fake, dp_backward_outputs)
 
         if lambda_tv > 0:
             loss_tv = lambda_tv * tf.reduce_mean(tf.image.total_variation(outputs))
             gen_loss = gen_loss + loss_tv
 
-        total_loss = gen_loss_GAN * gan_weight + gen_loss * l1_weight + bw_fake_gen_loss_SSIM * squirrel_weight
+        total_loss = gen_loss_GAN * gan_weight + gen_loss * l1_weight + gen_loss_lr * squirrel_weight
+        bw_gen_loss_total = bw_gen_loss_GAN * gan_weight + bw_gen_loss_SSIM * l1_weight
 
         if gen_loss_SSIM is None:
             gen_loss_SSIM = 1 - tf_ssim(dp_targets, dp_outputs, mean_metric=True, filter_size=21, filter_sigma=3)
@@ -2026,7 +1962,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             if rev_grads_and_vars is not None:
                 gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
             else:
-                gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
+                gen_grads_and_vars = np.concatenate((dec_grads_and_vars,  enc_grads_and_vars), axis=0)
             gen_grads_and_vars = gen_grads_and_vars.tolist()
 
             # apply gradients to graph
@@ -2070,7 +2006,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             if rev_grads_and_vars is not None:
                 bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
             else:
-                bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
+                bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars,  enc_grads_and_vars), axis=0)
             bw_gen_grads_and_vars = bw_gen_grads_and_vars.tolist()
 
             # apply gradients to graph
@@ -2078,36 +2014,9 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                 bw_gen_optim = tf.train.AdamOptimizer(lr, beta1)
                 bw_gen_train = bw_gen_optim.apply_gradients(bw_gen_grads_and_vars)
 
-    """with tf.name_scope("x_autoencoder_train"):
-        dependencies = [discrim_train, gen_train, bw_gen_train]
-        with tf.control_dependencies(dependencies):
-            xenc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/x_encoder")]
-            xdec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/x_decoder")]
-            xae_vars = xenc_vars + xdec_vars
-            xae_grads = tf.gradients(xae_loss_total, xae_vars)
-            xae_grads_and_vars = np.array(list(zip(xae_grads, xae_vars)))
-            # apply gradients to graph
-            with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
-                xae_optim = tf.train.AdamOptimizer(lr, beta1)
-                xae_train = xae_optim.apply_gradients(xae_grads_and_vars)
-
-    with tf.name_scope("y_autoencoder_train"):
-        dependencies = [discrim_train, gen_train, bw_gen_train, xae_train]
-        with tf.control_dependencies(dependencies):
-            yenc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/y_encoder")]
-            ydec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/y_decoder")]
-            yae_vars = yenc_vars + ydec_vars
-            yae_grads = tf.gradients(yae_loss_total, yae_vars)
-            yae_grads_and_vars = np.array(list(zip(yae_grads, yae_vars)))
-            # apply gradients to graph
-            with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
-                yae_optim = tf.train.AdamOptimizer(lr, beta1)
-                yae_train = yae_optim.apply_gradients(yae_grads_and_vars)"""
-
-
     with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
         ema = tf.train.ExponentialMovingAverage(decay=0.99, zero_debias=True)
-        _losses = [discrim_loss, gen_loss_GAN, gen_loss, gen_loss_SSIM, gen_loss_L2, bw_gen_loss_GAN ,bw_gen_loss_SSIM, bw_gen_loss_total, lr_discrim_loss, bw_fake_gen_loss_SSIM]
+        _losses = [discrim_loss, gen_loss_GAN, gen_loss, gen_loss_SSIM, gen_loss_L2, gen_loss_lr, bw_gen_loss_GAN ,bw_gen_loss_SSIM, bw_gen_loss_total, lr_discrim_loss]
         update_losses = ema.apply(list(set(_losses)))
 
         global_step = tf.train.get_or_create_global_step()
@@ -2131,13 +2040,13 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         gen_loss_L1=gen_loss_L1,
         gen_loss_L2=ema.average(gen_loss_L2),
         gen_loss_SSIM=ema.average(gen_loss_SSIM),
-        gen_loss_squirrel=ema.average(bw_gen_loss_total),
+        gen_loss_squirrel=ema.average(gen_loss_lr),
         gen_grads_and_vars=gen_grads_and_vars,
         outputs=dp_outputs,
         targets=dp_targets,
         losses={'gen_loss': gen_loss, 'discrim_loss': discrim_loss,
                 'gen_loss_L1': gen_loss_L1, 'gen_loss_L2': gen_loss_L2,
-                'gen_loss_SSIM': gen_loss_SSIM, 'gen_loss_squirrel': bw_gen_loss_total,
+                'gen_loss_SSIM': gen_loss_SSIM, 'gen_loss_squirrel': gen_loss_lr,
                 'squirrel_discrim_loss': lr_discrim_loss, 'gen_loss_GAN': gen_loss_GAN},
         uncertainty=sigma,
         squirrel_discrim_train= lr_discrim_train,
