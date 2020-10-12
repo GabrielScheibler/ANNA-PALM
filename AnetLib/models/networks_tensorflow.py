@@ -872,7 +872,6 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
     layer_specs = [
         ngf * 2, # encoder_2: [batch, 128, 128, ngf] => [batch, 64, 64, ngf * 2]
         ngf * 4, # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
-        ngf * 8, # encoder_4: [batch, 32, 32, ngf * 4] => [batch, 16, 16, ngf * 8]
     ]
 
     for out_channels in layer_specs:
@@ -908,7 +907,6 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
 
 
     layer_specs = [
-        (ngf * 4, None),   # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
         (ngf * 2, None),   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
         (ngf, None),       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
     ]
@@ -1000,7 +998,6 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
     layer_specs = [
         ngf * 2, # encoder_2: [batch, 128, 128, ngf] => [batch, 64, 64, ngf * 2]
         ngf * 4, # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
-        ngf * 8, # encoder_4: [batch, 32, 32, ngf * 4] => [batch, 16, 16, ngf * 8]
     ]
 
     for out_channels in layer_specs:
@@ -1036,7 +1033,6 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
 
 
     layer_specs = [
-        (ngf * 4, None),   # decoder_4: [batch, 16, 16, ngf * 8 * 2] => [batch, 32, 32, ngf * 4 * 2]
         (ngf * 2, None),   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
         (ngf, None),       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
     ]
@@ -1678,7 +1674,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
     with tf.name_scope("generator"):
         with tf.variable_scope("generator", reuse=tf.AUTO_REUSE) as scope:
             out_channels = int(targets.get_shape()[-1])
-            revnet = ReversibleNet(rev_layer_num, ngf*8/2)
+            revnet = ReversibleNet(rev_layer_num, ngf*4/2)
             if use_punet:
                 assert control_nc > 0
                 if control_classes is not None and control_classes > 0:
@@ -2489,6 +2485,15 @@ def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_r
         if model.squirrel_error_map is not None:
             with tf.name_scope("squirrel_error_map_summary"):
                 tf.summary.image("squirrel_error_map", convert(model.squirrel_error_map, clip=(0, 1)))
+
+        if tf.test.is_gpu_available() is not None:
+            with tf.name_scope("max_bytes_in_use"):
+                tf.summary.scalar("max_bytes_in_use", tf.contrib.memory_stats.MaxBytesInUse())
+
+        if tf.trainable_variables() is not None:
+            with tf.name_scope("parameter_count"):
+                parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in tf.trainable_variables()])
+                tf.summary.scalar("parameter_count", parameter_count)
 
         if model.gen_loss_squirrel is not None:
             tf.summary.scalar("generator_loss_squirrel", model.gen_loss_squirrel)
