@@ -261,7 +261,7 @@ class ReversibleNet():
                 for i in range(self.weights_per_layer):
                     layer_weights.append(weights.read(layer_index * self.weights_per_layer + i))
 
-                (inputs, input_grads, layer_weights_grads) = self.backprop_layer_forward_pass(outputs, output_grads, layer_weights)
+                (inputs, input_grads, layer_weights_grads) = self.backprop_layer_backward_pass(outputs, output_grads, layer_weights)
 
                 for i in range(self.weights_per_layer):
                     weights_grads = weights_grads.write(layer_index * self.weights_per_layer + i, tf.squeeze(layer_weights_grads[i]))

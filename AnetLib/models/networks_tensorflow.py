@@ -1924,7 +1924,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         lr_discrim_tvars = [var for var in tf.trainable_variables() if var.name.startswith("lr_discriminator")]
         lr_discrim_optim = tf.train.AdamOptimizer(lr, beta1)
         lr_discrim_grads_and_vars = lr_discrim_optim.compute_gradients(lr_discrim_loss, var_list=lr_discrim_tvars)
-        lr_discrim_train = discrim_optim.apply_gradients(lr_discrim_grads_and_vars)
+        lr_discrim_train = lr_discrim_optim.apply_gradients(lr_discrim_grads_and_vars)
 
     with tf.name_scope("generator_train"):
         dependencies = [discrim_train]
@@ -1986,7 +1986,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
 
             # manual gradients for revnet
             if revnet is not None and rev_layer_num > 0:
-                (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_forward_pass(rev_out_1_var,
+                (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_backward_pass(rev_out_1_var,
                                                                                                  rev_out_2_var,
                                                                                                  rev_out_1_grad,
                                                                                                  rev_out_2_grad)
