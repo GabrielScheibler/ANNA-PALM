@@ -1429,6 +1429,92 @@ def create_unet_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
         train=tf.group(update_losses, incr_global_step, gen_train),
     )
 
+def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, output_uncertainty=False, bayesian_dropout=False, use_resize_conv=False,
+                      dropout_prob=0.5, lr=0.0002, beta1=0.5, lambda_tv=0, use_ssim=False, use_punet=False,
+                      control_nc=0, control_classes=0, use_squirrel=False, squirrel_weight=0.5, lr_nc=0, lr_scale=1, lr_loss_mode='lr_inputs'):
+    with tf.variable_scope("generator") as scope:
+        out_channels = int(targets.get_shape()[-1])
+        if use_punet:
+            assert control_nc > 0
+            if control_classes is not None and control_classes > 0:
+                encoded = one_hot_encoding(controls[:, :, :, 0:1], classes=control_classes)
+                if control_nc > 1:
+                    controls = tf.concat([encoded, controls[:, :, :, 1:]], axis=3)
+                else:
+                    controls = encoded
+        else:
+            controls = None
+
+        raw_inputs = inputs
+        targets = preprocess(targets, mode='min_max[0,1]', range_lim=TARGET_RANGE_LIM)
+        if lr_nc > 0:
+            inputs_sr, scaled_lr_inputs = raw_inputs[:, :, :, :-lr_nc], preprocess(raw_inputs[:, :, :, -lr_nc:],
+                                                                                   mode='min_max[0,1]',
+                                                                                   range_lim=LR_RANGE_LIM)
+            _b, _h, _w, _ch = scaled_lr_inputs.get_shape().as_list()
+            lr_pos = int(np.log2(1.0 / lr_scale))
+            lr_inputs = deprocess(
+                tf.image.resize_images(scaled_lr_inputs, size=(_h // (2 ** lr_pos), _w // (2 ** lr_pos)),
+                                       method=tf.image.ResizeMethod.BILINEAR))
+            inputs = tf.concat([preprocess(inputs_sr, mode='mean_std'), scaled_lr_inputs], axis=3)
+        else:
+            scaled_lr_inputs = None
+            lr_inputs = None
+            inputs_sr = inputs
+            inputs = preprocess(inputs, mode='mean_std')
+        inputs = inputs * channel_masks
+
+    in_1 = inputs
+    in_2 = inputs
+
+    revnet = ReversibleNet(20, 2)
+
+    out_11, out_22 = revnet.forward_pass((in_1, in_2))
+    out_1, out_2 = revnet.backward_pass((out_11, out_22))
+
+    output11, output22 = out_11[:, :, :, 0:1], out_11[:, :, :, 1:2]
+    output1, output2 = out_1[:,:,:,0:1],out_1[:,:,:,1:2]
+    input1, input2 = in_1[:,:,:,0:1],in_1[:,:,:,1:2]
+
+    dp_out1 = deprocess(output1)
+    dp_out2 = deprocess(output2)
+    dp_in1 = deprocess(input1)
+    dp_in2 = deprocess(input2)
+    dp_targets = deprocess(targets)
+
+    global_step = tf.train.get_or_create_global_step()
+    incr_global_step = tf.assign(global_step, global_step + 1)
+
+    return Model(
+        type='UNET',
+        predict_real=output11,
+        predict_fake=output22,
+        inputs=input2,
+        lr_inputs=scaled_lr_inputs,
+        lr_predict_real=None,
+        lr_predict_fake=None,
+        squirrel_error_map=None,
+        squirrel_discrim_loss=None,
+        squirrel_discrim_grads_and_vars=None,
+        discrim_loss=None,
+        discrim_grads_and_vars=None,
+        gen_loss_GAN=None,
+        gen_loss=None,
+        gen_loss_L1=None,
+        gen_loss_L2=None,
+        gen_loss_SSIM=None,
+        gen_loss_squirrel=None,
+        gen_grads_and_vars=None,
+        losses = {'gen_loss': None, 'discrim_loss': None,
+                  'gen_loss_L1': None, 'gen_loss_L2': None,
+                  'gen_loss_SSIM': None, 'gen_loss_squirrel': None,
+                  'squirrel_discrim_loss': None},
+        outputs=output2,
+        targets=output22,
+        uncertainty=None,
+        squirrel_discrim_train=None,
+        train=tf.group(incr_global_step, dp_out1, dp_out2),
+    )
 
 def create_pix2pix_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, discriminator_layer_num=3, output_uncertainty=False,
                          bayesian_dropout=False, use_resize_conv=False, no_lsgan=False, dropout_prob=0.5,
@@ -2194,6 +2280,8 @@ def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_r
         model = create_unet_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, lr=lr, beta1=beta1, lambda_tv=lambda_tv)
     elif model_type == 'punet':
         model = create_unet_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, lr=lr, beta1=beta1, lambda_tv=lambda_tv, use_punet=True, control_nc=control_nc, control_classes=control_classes)
+    elif model_type == 'test_model':
+        model = create_test_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, lr=lr, beta1=beta1, lambda_tv=lambda_tv, use_punet=True, control_nc=control_nc, control_classes=control_classes)
     elif model_type == 'ssim_unet':
         model = create_unet_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, lr=lr, beta1=beta1, lambda_tv=lambda_tv, use_ssim=True)
     elif model_type == 'ssim_punet':
@@ -2395,7 +2483,7 @@ def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_r
             with tf.name_scope("squirrel_error_map_summary"):
                 tf.summary.image("squirrel_error_map", convert(model.squirrel_error_map, clip=(0, 1)))
 
-        if tf.test.is_gpu_available() is not None:
+        if tf.test.is_gpu_available():
             with tf.name_scope("max_bytes_in_use"):
                 tf.summary.scalar("max_bytes_in_use", tf.contrib.memory_stats.MaxBytesInUse())
 

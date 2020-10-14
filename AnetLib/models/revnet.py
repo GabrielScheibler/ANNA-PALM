@@ -344,13 +344,13 @@ def rev_block(in_1, in_2, weights, reverse):
             with tf.variable_scope("f"):
                 out_1 = in_1 - res_block(out_2, weights_f)
         else:
-            # y1 = x1 - NN1(x2)
+            # y1 = x1 + NN1(x2)
             with tf.variable_scope("f"):
-                out_1 = in_1 - res_block(in_2, weights_f)
+                out_1 = in_1 + res_block(in_2, weights_f)
 
-            # y2 = x2 - NN2(y1)
+            # y2 = x2 + NN2(y1)
             with tf.variable_scope("g"):
-                out_2 = in_2 - res_block(out_1, weights_g)
+                out_2 = in_2 + res_block(out_1, weights_g)
 
         return [out_1, out_2]
 
@@ -394,7 +394,6 @@ def rev_batchnorm(input, weights):
     with tf.variable_scope("batchnorm"):
         # this block looks like it has 3 inputs on the graph unless we do this
         input = tf.identity(input)
-        channels = input.get_shape()[3]
         offset = weights[0]
         scale = weights[1]
         mean, variance = tf.nn.moments(input, axes=[0, 1, 2], keep_dims=False)
