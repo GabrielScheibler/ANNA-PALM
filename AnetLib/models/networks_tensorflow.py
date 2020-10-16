@@ -70,7 +70,7 @@ def conv(batch_input, out_channels, stride):
         filter = tf.get_variable("filter", [4, 4, in_channels, out_channels], dtype=tf.float32, initializer=tf.random_normal_initializer(0, 0.02))
         # [batch, in_height, in_width, in_channels], [filter_width, filter_height, in_channels, out_channels]
         #     => [batch, out_height, out_width, out_channels]
-        padded_input = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="CONSTANT")
+        padded_input = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="REFLECT")
         conv = tf.nn.conv2d(padded_input, filter, [1, stride, stride, 1], padding="VALID")
         return conv
 
@@ -81,7 +81,7 @@ def conv7x7(batch_input, out_channels, stride):
                                  initializer=tf.random_normal_initializer(0, 0.02))
         # [batch, in_height, in_width, in_channels], [filter_width, filter_height, in_channels, out_channels]
         #     => [batch, out_height, out_width, out_channels]
-        padded_input = tf.pad(batch_input, [[0, 0], [3, 3], [3, 3], [0, 0]], mode="CONSTANT")
+        padded_input = tf.pad(batch_input, [[0, 0], [3, 3], [3, 3], [0, 0]], mode="REFLECT")
         conv = tf.nn.conv2d(padded_input, filter, [1, stride, stride, 1], padding="VALID")
         return conv
 
@@ -91,7 +91,7 @@ def conv3x3(batch_input):
         out_channels = in_channels
         filter = tf.get_variable("filter", [3, 3, in_channels, out_channels], dtype=tf.float32,
                                  initializer=tf.random_normal_initializer(0, 0.02))
-        padded_in_1 = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="CONSTANT")
+        padded_in_1 = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="REFLECT")
         out_1 = tf.nn.conv2d(padded_in_1, filter, [1, 1, 1, 1], padding="VALID")
         return out_1
 
@@ -1811,6 +1811,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             backward_outputs_lr = generate_revgan_backward_punet(targets, controls, lr_nc, ngf, bayesian_dropout=bayesian_dropout,
                                             dropout_prob=dropout_prob, output_num=1,
                                             use_resize_conv=use_resize_conv, revnet=revnet, use_skip_connections=use_skip_connections)
+            backward_outputs_lr = tf.stop_gradient(backward_outputs_lr)
 
 
             backward_outputs_fake_lr = generate_revgan_backward_punet(outputs, controls, lr_nc, ngf,
@@ -2048,7 +2049,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             if rev_grads_and_vars is not None:
                 gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
             else:
-                gen_grads_and_vars = np.concatenate((dec_grads_and_vars,  enc_grads_and_vars), axis=0)
+                gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
             gen_grads_and_vars = gen_grads_and_vars.tolist()
 
             # apply gradients to graph
@@ -2092,7 +2093,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             if rev_grads_and_vars is not None:
                 bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
             else:
-                bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars,  enc_grads_and_vars), axis=0)
+                bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
             bw_gen_grads_and_vars = bw_gen_grads_and_vars.tolist()
 
             # apply gradients to graph

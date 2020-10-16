@@ -5,7 +5,7 @@ class ReversibleNet():
     def __init__(self, num_blocks, num_channels):
         self.num_blocks = num_blocks
         self.num_channels = num_channels
-        self.weights_per_layer = 12
+        self.weights_per_layer = 6
         self.weight_list = self.def_rev_block_weights(self.num_channels)
         self.weight_ta = tf.TensorArray(dtype=tf.float32, size=len(self.weight_list), dynamic_size=False, clear_after_read=False,
                             infer_shape=False)
@@ -85,48 +85,9 @@ class ReversibleNet():
         weight_list = []
         for i in range(self.num_blocks):
             with tf.variable_scope("rev_core_%03d" % (i + 1)):
-                with tf.variable_scope("rev_block"):
-                    with tf.variable_scope("f"):
-                        with tf.variable_scope("res_block"):
-                            with tf.variable_scope("sub_1"):
-                                with tf.variable_scope("batchnorm"):
-                                    weight_list.append(tf.get_variable("offset", [channels], dtype=tf.float32,
-                                                             initializer=tf.zeros_initializer()))
-                                    weight_list.append(tf.get_variable("scale", [channels], dtype=tf.float32,
-                                                            initializer=tf.random_normal_initializer(1.0, 0.02)))
-                                with tf.variable_scope("conv3x3"):
-                                    weight_list.append(tf.get_variable("filter", [3, 3, channels, channels], dtype=tf.float32,
-                                                             initializer=tf.random_normal_initializer(0, 0.02)))
-                            with tf.variable_scope("sub_2"):
-                                with tf.variable_scope("batchnorm"):
-                                    weight_list.append(tf.get_variable("offset", [channels], dtype=tf.float32,
-                                                             initializer=tf.zeros_initializer()))
-                                    weight_list.append(tf.get_variable("scale", [channels], dtype=tf.float32,
-                                                            initializer=tf.random_normal_initializer(1.0, 0.02)))
-                                with tf.variable_scope("conv3x3"):
-                                    weight_list.append(tf.get_variable("filter", [3, 3, channels, channels], dtype=tf.float32,
-                                                             initializer=tf.random_normal_initializer(0, 0.02)))
-                    with tf.variable_scope("g"):
-                        with tf.variable_scope("res_block"):
-                            with tf.variable_scope("sub_1"):
-                                with tf.variable_scope("batchnorm"):
-                                    weight_list.append(tf.get_variable("offset", [channels], dtype=tf.float32,
-                                                             initializer=tf.zeros_initializer()))
-                                    weight_list.append(tf.get_variable("scale", [channels], dtype=tf.float32,
-                                                            initializer=tf.random_normal_initializer(1.0, 0.02)))
-                                with tf.variable_scope("conv3x3"):
-                                    weight_list.append(tf.get_variable("filter", [3, 3, channels, channels], dtype=tf.float32,
-                                                             initializer=tf.random_normal_initializer(0, 0.02)))
-                            with tf.variable_scope("sub_2"):
-                                with tf.variable_scope("batchnorm"):
-                                    weight_list.append(tf.get_variable("offset", [channels], dtype=tf.float32,
-                                                             initializer=tf.zeros_initializer()))
-                                    weight_list.append(tf.get_variable("scale", [channels], dtype=tf.float32,
-                                                            initializer=tf.random_normal_initializer(1.0, 0.02)))
-                                with tf.variable_scope("conv3x3"):
-                                    weight_list.append(tf.get_variable("filter", [3, 3, channels, channels], dtype=tf.float32,
-                                                             initializer=tf.random_normal_initializer(0, 0.02)))
+                weight_list = rev_block_weights(channels, weight_list)
         return weight_list
+
 
     def compute_revnet_gradients_of_forward_pass(self, y1, y2, dy1, dy2):
         """
@@ -197,9 +158,7 @@ class ReversibleNet():
         """
         # First , reverse the layer to r e t r i e v e inputs
         y1, y2 = outputs[0], outputs[1]
-        # F_weights , G_weights = tf.split(layer_weights, num_or_size_splits=2, axis=1)
-        F_weights = layer_weights[0:6]
-        G_weights = layer_weights[6:12]
+        F_weights, G_weights = tf.split(layer_weights, num_or_size_splits=2, axis=0)
 
         with tf.variable_scope("rev_block"):
             z1_stop = tf.stop_gradient(y1)
@@ -297,9 +256,7 @@ class ReversibleNet():
         """
         # First , reverse the layer to r e t r i e v e inputs
         x1, x2 = outputs[0], outputs[1]
-        # F_weights , G_weights = tf.split(layer_weights, num_or_size_splits=2, axis=1)
-        F_weights = layer_weights[0:6]
-        G_weights = layer_weights[6:12]
+        F_weights, G_weights = tf.split(layer_weights, num_or_size_splits=2, axis=0)
 
         with tf.variable_scope("rev_block"):
             x2_stop = tf.stop_gradient(x2)
@@ -331,9 +288,8 @@ class ReversibleNet():
 
 
 def rev_block(in_1, in_2, weights, reverse):
-    # weights_f, weights_g = tf.split(weights, num_or_size_splits=2, axis=1)
-    weights_f = weights[0:6]
-    weights_g = weights[6:12]
+    weights_f, weights_g = tf.split(weights, num_or_size_splits=2, axis=0)
+
     with tf.variable_scope("rev_block"):
         if reverse:
             # x2 = y2 - NN2(y1)
@@ -357,17 +313,12 @@ def rev_block(in_1, in_2, weights, reverse):
 def res_block(in_1, weights):
     with tf.variable_scope("res_block"):
         # weights_1, weights_2 = tf.split(weights, num_or_size_splits=2, axis=1)
-        weights_1 = weights[0:3]
-        weights_2 = weights[3:6]
+        weights_1 = weights
         with tf.variable_scope("sub_1"):
             out_1 = rev_conv3x3(in_1, tf.squeeze(weights_1[2]))
             out_1 = rev_batchnorm(out_1, weights_1[0:2])
             out_1 = rev_lrelu(out_1, 0.2)
-        with tf.variable_scope("sub_2"):
-            out_1 = rev_conv3x3(out_1, tf.squeeze(weights_2[2]))
-            out_1 = rev_batchnorm(out_1, weights_2[0:2])
-            out_1 = out_1 + in_1
-            out_1 = rev_lrelu(out_1, 0.2)
+            #out_1 = tf.tanh(out_1)
         return out_1
 
 def rev_conv3x3(batch_input, weight):
@@ -375,7 +326,7 @@ def rev_conv3x3(batch_input, weight):
         in_channels = batch_input.get_shape()[3]
         out_channels = in_channels
         filter = weight
-        padded_in_1 = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="CONSTANT")
+        padded_in_1 = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="REFLECT")
         out_1 = tf.nn.conv2d(padded_in_1, filter, [1, 1, 1, 1], padding="VALID")
         return out_1
 
@@ -401,3 +352,35 @@ def rev_batchnorm(input, weights):
         normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale,
                                                variance_epsilon=variance_epsilon)
         return normalized
+
+
+
+def rev_block_weights(channels, weights):
+    with tf.variable_scope("rev_block"):
+        with tf.variable_scope("f"):
+            weights = res_block_weights(channels, weights)
+        with tf.variable_scope("g"):
+            weights = res_block_weights(channels, weights)
+        return weights
+
+def res_block_weights(channels, weights):
+    with tf.variable_scope("res_block"):
+        with tf.variable_scope("sub_1"):
+            weights = rev_sub_weights(channels, weights)
+        return weights
+
+def rev_sub_weights(channels, weights):
+    weights = rev_batchnorm_weights(channels, weights)
+    weights = rev_conv3x3_weights(channels, weights)
+    return weights
+
+def rev_conv3x3_weights(channels, weights):
+    with tf.variable_scope("conv3x3"):
+        weights.append(tf.get_variable("filter", [3, 3, channels, channels], dtype=tf.float32, initializer=tf.zeros_initializer()))
+        return weights
+
+def rev_batchnorm_weights(channels, weights):
+    with tf.variable_scope("batchnorm"):
+        weights.append(tf.get_variable("offset", [channels], dtype=tf.float32, initializer=tf.zeros_initializer()))
+        weights.append(tf.get_variable("scale", [channels], dtype=tf.float32, initializer=tf.random_normal_initializer(1.0, 0.02)))
+        return weights
