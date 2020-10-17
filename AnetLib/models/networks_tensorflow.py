@@ -1464,43 +1464,107 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
             inputs = preprocess(inputs, mode='mean_std')
         inputs = inputs * channel_masks
 
-    in_1 = inputs
-    in_2 = inputs
+        in_1 = inputs
+        in_2 = inputs
 
-    revnet = ReversibleNet(20, 2)
+        revnet = ReversibleNet(51, 2)
 
-    out_11, out_22 = revnet.forward_pass((in_1, in_2))
-    out_1, out_2 = revnet.backward_pass((out_11, out_22))
+        outp_11,outp_22 = revnet.backward_pass_activations((in_1, in_2))
+        outpputs = tf.concat((outp_11, outp_22), axis=3)
 
-    output11, output22 = out_11[:, :, :, 0:1], out_11[:, :, :, 1:2]
-    output1, output2 = out_1[:,:,:,0:1],out_1[:,:,:,1:2]
-    input1, input2 = in_1[:,:,:,0:1],in_1[:,:,:,1:2]
+        out_11, out_22 = revnet.backward_pass((in_1, in_2))
+        out_1, out_2 = revnet.forward_pass((out_11, out_22))
 
-    dp_out1 = deprocess(output1)
-    dp_out2 = deprocess(output2)
-    dp_in1 = deprocess(input1)
-    dp_in2 = deprocess(input2)
-    dp_targets = deprocess(targets)
+        outputs = tf.concat((out_11, out_22), axis=3)
 
-    global_step = tf.train.get_or_create_global_step()
-    incr_global_step = tf.assign(global_step, global_step + 1)
+        output11, output22 = out_11[:, :, :, 0:1], out_11[:, :, :, 1:2]
+        output1, output2 = out_1[:,:,:,0:1],out_1[:,:,:,1:2]
+        input1, input2 = in_1[:,:,:,0:1],in_1[:,:,:,1:2]
+
+
+    with tf.name_scope("generator_train_p"):
+        dependencies = []
+        with tf.control_dependencies(dependencies):
+            # compute gradients for decoder part
+            lossp = tf.reduce_mean(tf.square(1 - outpputs))
+
+            dec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/")]
+            dec_grads = tf.gradients(lossp,dec_vars)
+            gen_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
+
+            gen_vars = gen_grads_and_vars[:, 1]
+            gen_grads = gen_grads_and_vars[:, 0]
+
+            print(gen_vars)
+
+            # apply gradients to graph
+            with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
+                gen_optim = tf.train.AdamOptimizer(lr, beta1)
+                gen_trainp = gen_optim.apply_gradients(gen_grads_and_vars)
+
+
+    with tf.name_scope("generator_train"):
+        dependencies = []
+        with tf.control_dependencies(dependencies):
+            # compute gradients for decoder part
+            loss = tf.reduce_mean(tf.square(1 - outputs))
+
+            rev_out_1_var = out_11
+            rev_out_2_var = out_22
+
+            dec_grads = tf.gradients(loss, [rev_out_1_var, rev_out_2_var], stop_gradients=[rev_out_1_var, rev_out_2_var])
+            rev_out_1_grad = dec_grads[0]
+            rev_out_2_grad = dec_grads[1]
+
+            # manual gradients for revnet
+            (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_backward_pass(rev_out_1_var,
+                                                                                             rev_out_2_var,
+                                                                                             rev_out_1_grad,
+                                                                                             rev_out_2_grad)
+
+
+
+            rev_grads_and_vars = np.array(rev_grads_and_vars)
+            rev_vars = rev_grads_and_vars[:,1]
+            rev_grads = rev_grads_and_vars[:, 0]
+            print(rev_vars)
+
+            gen_grads_and_vars = rev_grads_and_vars.tolist()
+
+            # apply gradients to graph
+            with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
+                gen_optim = tf.train.AdamOptimizer(lr, beta1)
+                gen_train = gen_optim.apply_gradients(gen_grads_and_vars)
+
+    with tf.name_scope("generator_grad_diff"):
+        grad_diff = rev_grads[62]
+        grad_diff = tf.transpose(grad_diff, [3,0,1,2])
+        grad_diff = grad_diff[0:1,:,:,0:1]
+
+        grad_diff1 = gen_grads[62]
+        grad_diff1 = tf.transpose(grad_diff1, [3, 0, 1, 2])
+        grad_diff1 = grad_diff1[0:1, :, :, 0:1]
+
+    with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
+        global_step = tf.train.get_or_create_global_step()
+        incr_global_step = tf.assign(global_step, global_step + 1)
 
     return Model(
         type='UNET',
-        predict_real=output11,
-        predict_fake=output22,
+        predict_real=out_11[:, :, :, 0:1],
+        predict_fake=outp_11[:, :, :, 0:1],
         inputs=input2,
         lr_inputs=scaled_lr_inputs,
-        lr_predict_real=None,
-        lr_predict_fake=None,
+        lr_predict_real=grad_diff,
+        lr_predict_fake=grad_diff1,
         squirrel_error_map=None,
         squirrel_discrim_loss=None,
         squirrel_discrim_grads_and_vars=None,
         discrim_loss=None,
         discrim_grads_and_vars=None,
         gen_loss_GAN=None,
-        gen_loss=None,
-        gen_loss_L1=None,
+        gen_loss=loss,
+        gen_loss_L1=lossp,
         gen_loss_L2=None,
         gen_loss_SSIM=None,
         gen_loss_squirrel=None,
@@ -1509,11 +1573,11 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
                   'gen_loss_L1': None, 'gen_loss_L2': None,
                   'gen_loss_SSIM': None, 'gen_loss_squirrel': None,
                   'squirrel_discrim_loss': None},
-        outputs=output2,
-        targets=output22,
+        outputs=output2[:, :, :, 0:1],
+        targets=output22[:, :, :, 0:1],
         uncertainty=None,
         squirrel_discrim_train=None,
-        train=tf.group(incr_global_step, dp_out1, dp_out2),
+        train=tf.group(incr_global_step, gen_train, gen_trainp),
     )
 
 def create_pix2pix_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, discriminator_layer_num=3, output_uncertainty=False,
@@ -2028,6 +2092,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                                                                                                  rev_out_2_var,
                                                                                                  rev_out_1_grad,
                                                                                                  rev_out_2_grad)
+                print(rev_grads_and_vars)
                 rev_grads_and_vars = np.array(rev_grads_and_vars)
             else:
                 (dy1, dy2) = (rev_out_1_grad, rev_out_2_grad)

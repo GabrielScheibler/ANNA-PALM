@@ -12,6 +12,71 @@ class ReversibleNet():
         for i in range(len(self.weight_list)):
             self.weight_ta = self.weight_ta.write(i, self.weight_list[i])
 
+    def forward_pass_activations(self, inputs):
+        """
+        Generates forward pass of the revnet
+        Args:
+            inputs: tuple of two same sized input tensors
+        Returns:
+            layer_rev_out: tuple of the two ouput tensors of the last network layer
+        """
+        print("revnet")
+        print(inputs[0].shape)
+        print(inputs[1].shape)
+
+        for i in range(self.num_blocks):
+            layer_weights = []
+            for j in range(self.weights_per_layer):
+                layer_weights.append(self.weight_ta.read(i * self.weights_per_layer + j))
+
+            in_1, in_2 = inputs
+            out_1, out_2 = rev_block(in_1, in_2, layer_weights, reverse=False)
+            out_1.set_shape(in_1.get_shape())
+            out_2.set_shape(in_1.get_shape())
+            inputs = (out_1, out_2)
+
+        return inputs
+
+    def backward_pass_activations(self, inputs):
+        """
+        Generates forward pass of the revnet
+        Args:
+            inputs: tuple of two same sized input tensors
+        Returns:
+            layer_rev_out: tuple of the two ouput tensors of the last network layer
+        """
+        print("revnet")
+        print(inputs[0].shape)
+        print(inputs[1].shape)
+
+        for i in range(self.num_blocks - 1, -1, -1):
+            layer_weights = []
+            for j in range(self.weights_per_layer):
+                layer_weights.append(self.weight_ta.read(i * self.weights_per_layer + j))
+
+            in_1, in_2 = inputs
+            out_1, out_2 = rev_block(in_1, in_2, layer_weights, reverse=True)
+            out_1.set_shape(in_1.get_shape())
+            out_2.set_shape(in_1.get_shape())
+            inputs = (out_1, out_2)
+
+        return inputs
+
+    def def_rev_block_weights(self, channels):
+        """
+        Defines weights for the revnet.
+        Args:
+            channels: channel number of the input tensors
+        Returns:
+            weight_list: list of all weights for the revnet, sorted alphabetically by variable-scope/name
+        """
+        weight_list = []
+        for i in range(self.num_blocks):
+            with tf.variable_scope("rev_core_%03d" % (i + 1)):
+                weight_list = rev_block_weights(channels, weight_list)
+        return weight_list
+
+
     def forward_pass(self, inputs):
         """
         Generates forward pass of the revnet
@@ -74,21 +139,6 @@ class ReversibleNet():
         return layer_rev_out
 
 
-    def def_rev_block_weights(self, channels):
-        """
-        Defines weights for the revnet.
-        Args:
-            channels: channel number of the input tensors
-        Returns:
-            weight_list: list of all weights for the revnet, sorted alphabetically by variable-scope/name
-        """
-        weight_list = []
-        for i in range(self.num_blocks):
-            with tf.variable_scope("rev_core_%03d" % (i + 1)):
-                weight_list = rev_block_weights(channels, weight_list)
-        return weight_list
-
-
     def compute_revnet_gradients_of_forward_pass(self, y1, y2, dy1, dy2):
         """
         Computes gradients.
@@ -138,7 +188,7 @@ class ReversibleNet():
                                                                       output_grads, weights, weights_grads],
                                                                      parallel_iterations=1, back_prop=False)
 
-            for i in range(self.num_blocks):
+            for i in range(self.num_blocks * self.weights_per_layer):
                 grads_list.append(weights_grads.read(index=i))
 
             return input_grads, list(zip(grads_list, self.weight_list))
@@ -234,12 +284,12 @@ class ReversibleNet():
                 input_grads[0].set_shape(output_grads[0].get_shape())
                 return [layer_index + 1, inputs, input_grads, weights, weights_grads]
 
-            _, inputs, input_grads, _, weights_grads = tf.while_loop(lambda i, *_: i < self.num_blocks - 1, loop_body,
+            _, inputs, input_grads, _, weights_grads = tf.while_loop(lambda i, *_: i <= self.num_blocks - 1, loop_body,
                                                                      [tf.constant(0), outputs,
                                                                       output_grads, weights, weights_grads],
                                                                      parallel_iterations=1, back_prop=False)
 
-            for i in range(self.num_blocks):
+            for i in range(self.num_blocks * self.weights_per_layer):
                 grads_list.append(weights_grads.read(index=i))
 
             return input_grads, list(zip(grads_list, self.weight_list))
@@ -324,7 +374,6 @@ def res_block(in_1, weights):
             out_1 = rev_conv3x3(in_1, tf.squeeze(weights_1[2]))
             out_1 = rev_batchnorm(out_1, weights_1[0:2])
             out_1 = rev_lrelu(out_1, 0.2)
-            #out_1 = tf.tanh(out_1)
         return out_1
 
 def rev_conv3x3(batch_input, weight):
