@@ -1811,7 +1811,6 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             backward_outputs_lr = generate_revgan_backward_punet(targets, controls, lr_nc, ngf, bayesian_dropout=bayesian_dropout,
                                             dropout_prob=dropout_prob, output_num=1,
                                             use_resize_conv=use_resize_conv, revnet=revnet, use_skip_connections=use_skip_connections)
-            backward_outputs_lr = tf.stop_gradient(backward_outputs_lr)
 
 
             backward_outputs_fake_lr = generate_revgan_backward_punet(outputs, controls, lr_nc, ngf,
@@ -1975,11 +1974,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                 gen_loss = gen_loss_L1
 
         if not no_lsgan:
-            if output_uncertainty:
-                # "VALID" mode in convolution only ever drops the right-most columns (or bottom-most rows).
-                bw_gen_loss_GAN = None
-            else:
-                bw_gen_loss_GAN = tf.reduce_mean(tf.square(lr_predict_fake - 1))
+            bw_gen_loss_GAN = tf.reduce_mean(tf.square(lr_predict_fake - 1))
         else:
             bw_gen_loss_GAN = tf.reduce_mean(-tf.log(lr_predict_fake + EPS))
 

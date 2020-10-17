@@ -158,7 +158,10 @@ class ReversibleNet():
         """
         # First , reverse the layer to r e t r i e v e inputs
         y1, y2 = outputs[0], outputs[1]
-        F_weights, G_weights = tf.split(layer_weights, num_or_size_splits=2, axis=0)
+        # F_weights , G_weights = tf.split(layer_weights, num_or_size_splits=2, axis=1)
+        split_index = int(len(layer_weights) / 2)
+        F_weights = layer_weights[0:split_index]
+        G_weights = layer_weights[split_index:]
 
         with tf.variable_scope("rev_block"):
             z1_stop = tf.stop_gradient(y1)
@@ -256,7 +259,9 @@ class ReversibleNet():
         """
         # First , reverse the layer to r e t r i e v e inputs
         x1, x2 = outputs[0], outputs[1]
-        F_weights, G_weights = tf.split(layer_weights, num_or_size_splits=2, axis=0)
+        split_index = int(len(layer_weights) / 2)
+        F_weights = layer_weights[0:split_index]
+        G_weights = layer_weights[split_index:]
 
         with tf.variable_scope("rev_block"):
             x2_stop = tf.stop_gradient(x2)
@@ -288,8 +293,9 @@ class ReversibleNet():
 
 
 def rev_block(in_1, in_2, weights, reverse):
-    weights_f, weights_g = tf.split(weights, num_or_size_splits=2, axis=0)
-
+    split_index = int(len(weights) / 2)
+    weights_f = weights[0:split_index]
+    weights_g = weights[split_index:]
     with tf.variable_scope("rev_block"):
         if reverse:
             # x2 = y2 - NN2(y1)
