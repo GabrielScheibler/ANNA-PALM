@@ -1467,7 +1467,7 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
         in_1 = inputs
         in_2 = inputs
 
-        revnet = ReversibleNet(51, 2)
+        revnet = ReversibleNet(10, 2)
 
         outp_11,outp_22 = revnet.backward_pass_activations((in_1, in_2))
         outpputs = tf.concat((outp_11, outp_22), axis=3)
@@ -1483,67 +1483,89 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
 
 
     with tf.name_scope("generator_train_p"):
-        dependencies = []
+        # compute gradients for decoder part
+        lossp = tf.reduce_mean(tf.square(1 - outpputs))
+
+        dec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/")]
+        dec_grads = tf.gradients(lossp,dec_vars)
+        gen_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
+
+        gen_vars = gen_grads_and_vars[:, 1]
+        gen_grads = gen_grads_and_vars[:, 0]
+
+
+
+    with tf.name_scope("generator_train"):
+
+        # compute gradients for decoder part
+        loss = tf.reduce_mean(tf.square(1 - outputs))
+
+        rev_out_1_var = out_11
+        rev_out_2_var = out_22
+
+        dec_grads = tf.gradients(loss, [rev_out_1_var, rev_out_2_var], stop_gradients=[rev_out_1_var, rev_out_2_var])
+        rev_out_1_grad = dec_grads[0]
+        rev_out_2_grad = dec_grads[1]
+
+        # manual gradients for revnet
+        y,  dy, rev_grads_and_vars = revnet.compute_revnet_gradients_of_backward_pass(rev_out_1_var, rev_out_2_var,
+                                                                          rev_out_1_grad, rev_out_2_grad)
+
+        y1,y2 = y
+
+
+        #rev_in = in_1
+        #rev_in_bp = y1
+
+        bp_input1, bp_input2 = y1[:, :, :, 0:1], y1[:, :, :, 1:2]
+
+        rev_grads_and_vars = np.array(rev_grads_and_vars)
+        rev_vars = rev_grads_and_vars[:, 1]
+        rev_grads = rev_grads_and_vars[:, 0]
+        #print(rev_vars)
+
+        gen_grads_and_vars = rev_grads_and_vars.tolist()
+
+        dependencies = rev_grads + rev_vars + gen_grads + gen_vars
         with tf.control_dependencies(dependencies):
-            # compute gradients for decoder part
-            lossp = tf.reduce_mean(tf.square(1 - outpputs))
+            # apply gradients to graph
+            with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
+                gen_optim = tf.train.AdamOptimizer(lr, beta1)
+                #gen_train = gen_optim.apply_gradients(gen_grads_and_vars)
+                gen_train = rev_grads[13]
 
-            dec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/")]
-            dec_grads = tf.gradients(lossp,dec_vars)
-            gen_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
-
-            gen_vars = gen_grads_and_vars[:, 1]
-            gen_grads = gen_grads_and_vars[:, 0]
-
-            print(gen_vars)
-
+        dependencies = list(rev_grads) + list(rev_vars) + list(gen_grads) + list(gen_vars) + list([gen_train])
+        with tf.control_dependencies(dependencies):
             # apply gradients to graph
             with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
                 gen_optim = tf.train.AdamOptimizer(lr, beta1)
                 gen_trainp = gen_optim.apply_gradients(gen_grads_and_vars)
-
-
-    with tf.name_scope("generator_train"):
-        dependencies = []
-        with tf.control_dependencies(dependencies):
-            # compute gradients for decoder part
-            loss = tf.reduce_mean(tf.square(1 - outputs))
-
-            rev_out_1_var = out_11
-            rev_out_2_var = out_22
-
-            dec_grads = tf.gradients(loss, [rev_out_1_var, rev_out_2_var], stop_gradients=[rev_out_1_var, rev_out_2_var])
-            rev_out_1_grad = dec_grads[0]
-            rev_out_2_grad = dec_grads[1]
-
-            # manual gradients for revnet
-            (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_backward_pass(rev_out_1_var,
-                                                                                             rev_out_2_var,
-                                                                                             rev_out_1_grad,
-                                                                                             rev_out_2_grad)
-
-
-
-            rev_grads_and_vars = np.array(rev_grads_and_vars)
-            rev_vars = rev_grads_and_vars[:,1]
-            rev_grads = rev_grads_and_vars[:, 0]
-            print(rev_vars)
-
-            gen_grads_and_vars = rev_grads_and_vars.tolist()
-
-            # apply gradients to graph
-            with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
-                gen_optim = tf.train.AdamOptimizer(lr, beta1)
-                gen_train = gen_optim.apply_gradients(gen_grads_and_vars)
+                #gen_trainp = gen_vars
 
     with tf.name_scope("generator_grad_diff"):
-        grad_diff = rev_grads[62]
-        grad_diff = tf.transpose(grad_diff, [3,0,1,2])
-        grad_diff = grad_diff[0:1,:,:,0:1]
+        dependencies = list(gen_grads) + list(gen_vars) + list(rev_grads) + list(rev_vars) + list([gen_train]) + list([gen_trainp])
+        with tf.control_dependencies(dependencies):
+            over_pi = 57.29577951308232
 
-        grad_diff1 = gen_grads[62]
-        grad_diff1 = tf.transpose(grad_diff1, [3, 0, 1, 2])
-        grad_diff1 = grad_diff1[0:1, :, :, 0:1]
+            grad_index = 9 * 6 + 2
+
+            grad_diff = rev_grads[grad_index]
+            grad_diff = tf.transpose(grad_diff, [3,0,1,2])
+            grad_diff = grad_diff[0:1,:,:,0:1]
+
+            grad_diff1 = gen_grads[grad_index]
+            grad_diff1 = tf.transpose(grad_diff1, [3, 0, 1, 2])
+            grad_diff1 = grad_diff1[0:1, :, :, 0:1]
+
+            rev_grads[grad_index].set_shape(gen_grads[grad_index].get_shape())
+
+            t1 = tf.reshape(rev_grads[grad_index], [-1])
+            t2 = tf.reshape(gen_grads[grad_index], [-1])
+            grad_diff2 = tf.tensordot(t1, t2, 1) / (tf.norm(t1) * tf.norm(t2))
+            grad_diff2 = tf.acos(grad_diff2)
+            grad_diff2 = grad_diff2 * over_pi
+            #grad_diff2 = tf.where(tf.is_nan(grad_diff2), -1., grad_diff2)
+
 
     with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
         global_step = tf.train.get_or_create_global_step()
@@ -1551,12 +1573,12 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
 
     return Model(
         type='UNET',
-        predict_real=out_11[:, :, :, 0:1],
-        predict_fake=outp_11[:, :, :, 0:1],
-        inputs=input2,
-        lr_inputs=scaled_lr_inputs,
-        lr_predict_real=grad_diff,
-        lr_predict_fake=grad_diff1,
+        predict_real=None,
+        predict_fake=None,
+        inputs=input1,
+        lr_inputs=None,
+        lr_predict_real=bp_input1,
+        lr_predict_fake=None,
         squirrel_error_map=None,
         squirrel_discrim_loss=None,
         squirrel_discrim_grads_and_vars=None,
@@ -1565,7 +1587,7 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
         gen_loss_GAN=None,
         gen_loss=loss,
         gen_loss_L1=lossp,
-        gen_loss_L2=None,
+        gen_loss_L2=grad_diff2,
         gen_loss_SSIM=None,
         gen_loss_squirrel=None,
         gen_grads_and_vars=None,
@@ -1573,11 +1595,11 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
                   'gen_loss_L1': None, 'gen_loss_L2': None,
                   'gen_loss_SSIM': None, 'gen_loss_squirrel': None,
                   'squirrel_discrim_loss': None},
-        outputs=output2[:, :, :, 0:1],
-        targets=output22[:, :, :, 0:1],
+        outputs=output11,
+        targets=output1,
         uncertainty=None,
         squirrel_discrim_train=None,
-        train=tf.group(incr_global_step, gen_train, gen_trainp),
+        train=tf.group(incr_global_step, gen_trainp),
     )
 
 def create_pix2pix_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, discriminator_layer_num=3, output_uncertainty=False,
@@ -1872,10 +1894,12 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
 
                 sigma = None
 
-            backward_outputs_lr = generate_revgan_backward_punet(targets, controls, lr_nc, ngf, bayesian_dropout=bayesian_dropout,
-                                            dropout_prob=dropout_prob, output_num=1,
-                                            use_resize_conv=use_resize_conv, revnet=revnet, use_skip_connections=use_skip_connections)
 
+            backward_outputs_lr = generate_revgan_backward_punet(targets, controls, lr_nc, ngf,
+                                                                 bayesian_dropout=bayesian_dropout,
+                                                                 dropout_prob=dropout_prob, output_num=1,
+                                                                 use_resize_conv=use_resize_conv, revnet=revnet,
+                                                                 use_skip_connections=use_skip_connections)
 
             backward_outputs_fake_lr = generate_revgan_backward_punet(outputs, controls, lr_nc, ngf,
                                                               bayesian_dropout=bayesian_dropout,
@@ -1954,16 +1978,19 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         # minimizing -tf.log will try to get inputs to 1
         # predict_real => 1
         # predict_fake => 0
+        cond = tf.equal(tf.reduce_min(lr_inputs), tf.reduce_max(lr_inputs))
+        mask = tf.cond(cond, lambda: tf.constant(0.0), lambda: tf.constant(1.0))
         if not no_lsgan:
-            lr_discrim_loss = tf.reduce_mean(tf.square(lr_predict_real - 1)) + tf.reduce_mean(tf.square(lr_predict_fake))
+            lr_discrim_loss = mask * tf.reduce_mean(tf.square(lr_predict_real - 1)) + tf.reduce_mean(tf.square(lr_predict_fake))
         else:
-            lr_discrim_loss = tf.reduce_mean(-(tf.log(lr_predict_real + EPS) + tf.log(1 - lr_predict_fake + EPS)))
+            lr_discrim_loss = mask * tf.reduce_mean(-(tf.log(lr_predict_real + EPS) + tf.log(1 - lr_predict_fake + EPS)))
 
     dp_outputs = deprocess(outputs)
     dp_targets = deprocess(targets)
     dp_backward_outputs = deprocess(backward_outputs_lr)
     dp_backward_outputs_fake = deprocess(backward_outputs_fake_lr)
     dp_lr_input = deprocess(scaled_lr_inputs)
+
     with tf.name_scope("generator_loss"):
         # predict_fake => 1
         # abs(targets - outputs) => 0
@@ -2037,6 +2064,21 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                 gen_loss_L1 = tf.reduce_mean(tf.abs(targets - outputs))
                 gen_loss = gen_loss_L1
 
+        gen_loss_lr = tf_ms_ssim_l1_loss(dp_backward_outputs_fake, dp_lr_input)
+
+        if lambda_tv > 0:
+            loss_tv = lambda_tv * tf.reduce_mean(tf.image.total_variation(outputs))
+            gen_loss = gen_loss + loss_tv
+
+        total_loss = gen_loss_GAN * gan_weight + gen_loss * l1_weight + gen_loss_lr * squirrel_weight
+
+
+        if gen_loss_SSIM is None:
+            gen_loss_SSIM = 1 - tf_ssim(dp_targets, dp_outputs, mean_metric=True, filter_size=21, filter_sigma=3)
+        if gen_loss_L2 is None:
+            gen_loss_L2 = tf.reduce_mean(tf.square(targets - outputs))
+
+    with tf.name_scope("bw_generator_loss"):
         if not no_lsgan:
             bw_gen_loss_GAN = tf.reduce_mean(tf.square(lr_predict_fake - 1))
         else:
@@ -2046,19 +2088,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         mask = tf.cond(cond, lambda: tf.constant(0.0), lambda: tf.constant(1.0))
         bw_gen_loss_SSIM = mask * tf_ms_ssim_l1_loss(dp_backward_outputs, dp_lr_input)
 
-        gen_loss_lr = tf_ms_ssim_l1_loss(dp_backward_outputs_fake, dp_backward_outputs)
-
-        if lambda_tv > 0:
-            loss_tv = lambda_tv * tf.reduce_mean(tf.image.total_variation(outputs))
-            gen_loss = gen_loss + loss_tv
-
-        total_loss = gen_loss_GAN * gan_weight + gen_loss * l1_weight + gen_loss_lr * squirrel_weight
         bw_gen_loss_total = bw_gen_loss_GAN * gan_weight + bw_gen_loss_SSIM * l1_weight
-
-        if gen_loss_SSIM is None:
-            gen_loss_SSIM = 1 - tf_ssim(dp_targets, dp_outputs, mean_metric=True, filter_size=21, filter_sigma=3)
-        if gen_loss_L2 is None:
-            gen_loss_L2 = tf.reduce_mean(tf.square(targets - outputs))
 
     with tf.name_scope("discriminator_train"):
         discrim_tvars = [var for var in tf.trainable_variables() if var.name.startswith("discriminator")]
@@ -2072,45 +2102,84 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         lr_discrim_grads_and_vars = lr_discrim_optim.compute_gradients(lr_discrim_loss, var_list=lr_discrim_tvars)
         lr_discrim_train = lr_discrim_optim.apply_gradients(lr_discrim_grads_and_vars)
 
+    with tf.name_scope("generator_grads"):
+        # compute gradients for decoder part
+        dec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/y_decoder")]
+        rev_out_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_output_1:0")
+        rev_out_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_output_2:0")
+        dec_grads = tf.gradients(total_loss, [rev_out_1_var, rev_out_2_var] + dec_vars,
+                                 stop_gradients=[rev_out_1_var, rev_out_2_var])
+        rev_out_1_grad = dec_grads[0]
+        rev_out_2_grad = dec_grads[1]
+        dec_grads = dec_grads[2:]
+        dec_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
+
+        # manual gradients for revnet
+        if revnet is not None and rev_layer_num > 0:
+            _, (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_forward_pass(rev_out_1_var,
+                                                                                             rev_out_2_var,
+                                                                                             rev_out_1_grad,
+                                                                                             rev_out_2_grad)
+            rev_grads_and_vars = np.array(rev_grads_and_vars)
+        else:
+            (dy1, dy2) = (rev_out_1_grad, rev_out_2_grad)
+            rev_grads_and_vars = None
+
+        # gradients for encoder part
+        enc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/x_encoder")]
+        rev_in_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_input_1:0")
+        rev_in_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_input_2:0")
+        enc_grads = tf.gradients([rev_in_1_var, rev_in_2_var], enc_vars, [dy1, dy2])
+        enc_grads_and_vars = np.array(list(zip(enc_grads, enc_vars)))
+
+        # combine all gradients in one list
+        if rev_grads_and_vars is not None:
+            gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
+        else:
+            gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
+        gen_grads_and_vars = gen_grads_and_vars.tolist()
+
+    with tf.name_scope("backward_generator_grads"):
+        # compute gradients for decoder part
+        dec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/x_decoder")]
+        rev_out_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_output_1:0")
+        rev_out_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_output_2:0")
+        dec_grads = tf.gradients(bw_gen_loss_total, [rev_out_1_var, rev_out_2_var] + dec_vars,
+                                 stop_gradients=[rev_out_1_var, rev_out_2_var])
+        rev_out_1_grad = dec_grads[0]
+        rev_out_2_grad = dec_grads[1]
+        dec_grads = dec_grads[2:]
+        dec_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
+
+        # manual gradients for revnet
+        if revnet is not None and rev_layer_num > 0:
+            _, (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_backward_pass(rev_out_1_var,
+                                                                                              rev_out_2_var,
+                                                                                              rev_out_1_grad,
+                                                                                              rev_out_2_grad)
+            rev_grads_and_vars = np.array(rev_grads_and_vars)
+        else:
+            (dy1, dy2) = (rev_out_1_grad, rev_out_2_grad)
+            rev_grads_and_vars = None
+
+        # gradients for encoder part
+        enc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/y_encoder")]
+        rev_in_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_input_1:0")
+        rev_in_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_input_2:0")
+        enc_grads = tf.gradients([rev_in_1_var, rev_in_2_var], enc_vars, [dy1, dy2])
+        enc_grads_and_vars = np.array(list(zip(enc_grads, enc_vars)))
+
+        # combine all gradients in one list
+        if rev_grads_and_vars is not None:
+            bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
+        else:
+            bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
+        bw_gen_grads_and_vars = bw_gen_grads_and_vars.tolist()
+
+
     with tf.name_scope("generator_train"):
-        dependencies = [discrim_train]
+        dependencies = [discrim_train, bw_gen_grads_and_vars[0][0], gen_grads_and_vars[0][0]]
         with tf.control_dependencies(dependencies):
-            # compute gradients for decoder part
-            dec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/y_decoder")]
-            rev_out_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_output_1:0")
-            rev_out_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_output_2:0")
-            dec_grads = tf.gradients(total_loss, [rev_out_1_var, rev_out_2_var] + dec_vars,
-                                     stop_gradients=[rev_out_1_var, rev_out_2_var])
-            rev_out_1_grad = dec_grads[0]
-            rev_out_2_grad = dec_grads[1]
-            dec_grads = dec_grads[2:]
-            dec_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
-
-            # manual gradients for revnet
-            if revnet is not None and rev_layer_num > 0:
-                (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_forward_pass(rev_out_1_var,
-                                                                                                 rev_out_2_var,
-                                                                                                 rev_out_1_grad,
-                                                                                                 rev_out_2_grad)
-                print(rev_grads_and_vars)
-                rev_grads_and_vars = np.array(rev_grads_and_vars)
-            else:
-                (dy1, dy2) = (rev_out_1_grad, rev_out_2_grad)
-                rev_grads_and_vars = None
-
-            # gradients for encoder part
-            enc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/x_encoder")]
-            rev_in_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_input_1:0")
-            rev_in_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_input_2:0")
-            enc_grads = tf.gradients([rev_in_1_var, rev_in_2_var], enc_vars, [dy1, dy2])
-            enc_grads_and_vars = np.array(list(zip(enc_grads, enc_vars)))
-
-            # combine all gradients in one list
-            if rev_grads_and_vars is not None:
-                gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
-            else:
-                gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
-            gen_grads_and_vars = gen_grads_and_vars.tolist()
 
             # apply gradients to graph
             with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
@@ -2119,43 +2188,8 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
 
 
     with tf.name_scope("backward_generator_train"):
-        dependencies = [lr_discrim_train]
+        dependencies = [lr_discrim_train, bw_gen_grads_and_vars[0][0], gen_grads_and_vars[0][0]]
         with tf.control_dependencies(dependencies):
-            # compute gradients for decoder part
-            dec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/x_decoder")]
-            rev_out_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_output_1:0")
-            rev_out_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_output_2:0")
-            dec_grads = tf.gradients(bw_gen_loss_total, [rev_out_1_var, rev_out_2_var] + dec_vars, stop_gradients=[rev_out_1_var, rev_out_2_var])
-            rev_out_1_grad = dec_grads[0]
-            rev_out_2_grad = dec_grads[1]
-            dec_grads = dec_grads[2:]
-            dec_grads_and_vars = np.array(list(zip(dec_grads, dec_vars)))
-
-            # manual gradients for revnet
-            if revnet is not None and rev_layer_num > 0:
-                (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_backward_pass(rev_out_1_var,
-                                                                                                 rev_out_2_var,
-                                                                                                 rev_out_1_grad,
-                                                                                                 rev_out_2_grad)
-                rev_grads_and_vars = np.array(rev_grads_and_vars)
-            else:
-                (dy1, dy2) = (rev_out_1_grad, rev_out_2_grad)
-                rev_grads_and_vars = None
-
-            # gradients for encoder part
-            enc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/y_encoder")]
-            rev_in_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_input_1:0")
-            rev_in_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_input_2:0")
-            enc_grads = tf.gradients([rev_in_1_var, rev_in_2_var], enc_vars, [dy1, dy2])
-            enc_grads_and_vars = np.array(list(zip(enc_grads, enc_vars)))
-
-            # combine all gradients in one list
-            if rev_grads_and_vars is not None:
-                bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
-            else:
-                bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
-            bw_gen_grads_and_vars = bw_gen_grads_and_vars.tolist()
-
             # apply gradients to graph
             with tf.variable_scope(tf.get_variable_scope(), reuse=tf.AUTO_REUSE):
                 bw_gen_optim = tf.train.AdamOptimizer(lr, beta1)
