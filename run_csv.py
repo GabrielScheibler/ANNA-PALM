@@ -27,8 +27,8 @@ opt.add_data_type_control = True
 opt.add_lr_channel = False
 opt.use_random_channel_mask = True
 opt.lr_loss_mode = 'lr_predict'
-opt.ngf = 2
-opt.ndf = 2
+opt.ngf = 64
+opt.ndf = 64
 
 now = datetime.now()
 opt.tb_dir = os.path.join(opt.tb_dir, "log_" + now.strftime("%Y%m%d-%H%M%S"))

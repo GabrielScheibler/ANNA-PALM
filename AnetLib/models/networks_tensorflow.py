@@ -85,14 +85,13 @@ def conv7x7(batch_input, out_channels, stride):
         conv = tf.nn.conv2d(padded_input, filter, [1, stride, stride, 1], padding="VALID")
         return conv
 
-def conv3x3(batch_input):
+def conv3x3(batch_input, out_channels, stride):
     with tf.variable_scope("conv3x3"):
         in_channels = batch_input.get_shape()[3]
-        out_channels = in_channels
         filter = tf.get_variable("filter", [3, 3, in_channels, out_channels], dtype=tf.float32,
                                  initializer=tf.random_normal_initializer(0, 0.02))
         padded_in_1 = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="REFLECT")
-        out_1 = tf.nn.conv2d(padded_in_1, filter, [1, 1, 1, 1], padding="VALID")
+        out_1 = tf.nn.conv2d(padded_in_1, filter, [1, stride, stride, 1], padding="VALID")
         return out_1
 
 def conv1x1(batch_input, out_channels):
@@ -134,7 +133,7 @@ def batchnorm(input):
         channels = input.get_shape()[3]
         offset = tf.get_variable("offset", [channels], dtype=tf.float32, initializer=tf.zeros_initializer())
         scale = tf.get_variable("scale", [channels], dtype=tf.float32, initializer=tf.random_normal_initializer(1.0, 0.02))
-        mean, variance = tf.nn.moments(input, axes=[0, 1, 2], keep_dims=False)
+        mean, variance = tf.nn.moments(input, axes=[0, 1, 2, 3], keep_dims=True)
         variance_epsilon = 1e-5
         normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale, variance_epsilon=variance_epsilon)
         return normalized
@@ -346,299 +345,6 @@ def tf_l1_loss(img1, img2):
 def tf_l2_loss(img1, img2):
     diff = tf.square(img1 - img2)
     return tf.reduce_mean(diff)
-
-def generate_revgan_x_encoder(generator_inputs, ngf=64, lr_inputs=None, lr_pos=0):
-    layers = []
-    print("x_encoder")
-    print(generator_inputs.shape)
-    # encoder_1: [batch, 256, 256, in_channels] => [batch, 256, 256, ngf]
-    with tf.variable_scope("x_encoder_1"):
-        if lr_inputs is not None and lr_pos == 0:
-            generator_inputs = tf.concat([generator_inputs, lr_inputs], axis=3)
-        convolved = conv7x7(generator_inputs, ngf, stride=1)
-        output = batchnorm(convolved)
-        output = lrelu(output, 0.2)
-        if lr_inputs is not None and lr_pos == 1:
-            layers.append(tf.concat([lr_inputs, output], axis=3))
-        else:
-            layers.append(output)
-    print(output.shape)
-    layer_specs = [
-        ngf * 2,  # encoder_2: [batch, 256, 256, ngf] => [batch, 128, 128, ngf * 2]
-        ngf * 4,  # encoder_3: [batch, 128, 128, ngf * 2] => [batch, 64, 64, ngf * 4]
-    ]
-
-    for out_channels in layer_specs:
-        with tf.variable_scope("x_encoder_%d" % (len(layers) + 1)):
-
-            # [batch, in_height, in_width, in_channels] => [batch, in_height/2, in_width/2, out_channels]
-            convolved = conv(layers[-1], out_channels, stride=2)
-            output = batchnorm(convolved)
-            output = lrelu(output, 0.2)
-            if lr_inputs is not None and lr_pos == len(layers) + 1:
-                layers.append(tf.concat([lr_inputs, output], axis=3))
-            else:
-                layers.append(output)
-        print(output.shape)
-    return output
-
-def generate_revgan_y_encoder(generator_inputs, ngf=64, lr_inputs=None, lr_pos=0):
-    layers = []
-    print("y_encoder")
-    print(generator_inputs.shape)
-    # encoder_1: [batch, 512, 512, in_channels] => [batch, 512, 512, ngf]
-    with tf.variable_scope("y_encoder_1"):
-        if lr_inputs is not None and lr_pos == 0:
-            generator_inputs = tf.concat([generator_inputs, lr_inputs], axis=3)
-        convolved = conv7x7(generator_inputs, ngf, stride=1)
-        output = batchnorm(convolved)
-        output = lrelu(output, 0.2)
-        if lr_inputs is not None and lr_pos == 1:
-            layers.append(tf.concat([lr_inputs, output], axis=3))
-        else:
-            layers.append(output)
-    print(output.shape)
-    layer_specs = [
-        ngf * 2,  # encoder_2: [batch, 256, 256, ngf] => [batch, 128, 128, ngf * 2]
-        ngf * 4,  # encoder_3: [batch, 128, 128, ngf * 2] => [batch, 64, 64, ngf * 4]
-    ]
-
-    for out_channels in layer_specs:
-        with tf.variable_scope("y_encoder_%d" % (len(layers) + 1)):
-
-            # [batch, in_height, in_width, in_channels] => [batch, in_height/2, in_width/2, out_channels]
-            convolved = conv(layers[-1], out_channels, stride=2)
-            output = batchnorm(convolved)
-            output = lrelu(output, 0.2)
-            if lr_inputs is not None and lr_pos == len(layers) + 1:
-                layers.append(tf.concat([lr_inputs, output], axis=3))
-            else:
-                layers.append(output)
-        print(output.shape)
-    return output
-
-
-def generate_revgan_x_decoder(generator_inputs, generator_outputs_channels, ngf=64, output_num=1,
-                              activation=tf.tanh, use_resize_conv=False, lr_nc=0, lr_pos=0):
-
-    print("x_decoder")
-    print(generator_inputs.shape)
-    layers = []
-    layers.append(generator_inputs)
-
-    layer_specs = [
-        (ngf * 2, None),  # decoder_3: [batch, 128, 128, ngf * 4] => [batch, 256, 256, ngf * 2]
-        (ngf, None),  # decoder_2: [batch, 256, 256, ngf * 2] => [batch, 512, 512, ngf]
-    ]
-
-    for decoder_layer, (out_channels, dropout) in enumerate(layer_specs):
-        with tf.variable_scope("x_decoder_%d" % (decoder_layer + 1)):
-
-            input = layers[-1]
-
-            rectified = tf.nn.relu(input)
-
-            if lr_nc > 0 and lr_pos == len(layer_specs) - decoder_layer:
-                lr_output = conv7x7(rectified, lr_nc, stride=1)
-
-            # [batch, in_height, in_width, in_channels] => [batch, in_height*2, in_width*2, out_channels]
-            if use_resize_conv:
-                output = resizeconv(rectified, out_channels)
-            else:
-                output = deconv(rectified, out_channels)
-            output = batchnorm(output)
-
-            if dropout is not None:
-                output = tf.nn.dropout(output, keep_prob=1 - dropout)
-
-            print(output.shape)
-            layers.append(output)
-
-    with tf.variable_scope("x_decoder_%d_lr" % (len(layer_specs) + 1)):
-        if lr_nc > 0 and lr_pos == 0:
-            lr_output = conv7x7(rectified, lr_nc, stride=1)
-        else:
-            lr_output = None
-
-    if output_num == 1:
-        # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
-        with tf.variable_scope("x_decoder_%d" % (len(layer_specs) + 1)):
-            input = layers[-1]
-            rectified = tf.nn.relu(input)
-            output = conv7x7(rectified, generator_outputs_channels, stride=1)
-            if activation:
-                output = activation(output)
-            layers.append(output)
-        print(output.shape)
-        return output, None
-    else:
-        layer_1 = layers[-1]
-        outputs = []
-        for i in range(output_num):
-            # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
-            with tf.variable_scope("x_decoder_%d" % (len(layer_specs) + 1) + str(i)):
-                input = layer_1
-                rectified = tf.nn.relu(input)
-                output = conv7x7(rectified, generator_outputs_channels, stride=1)
-                if activation:
-                    output = activation(output)
-                outputs.append(output)
-        outputs = tuple(outputs)
-        return outputs, None
-
-def generate_revgan_y_decoder(generator_inputs, generator_outputs_channels, ngf=64, output_num=1,
-                              activation=tf.tanh, use_resize_conv=False, lr_nc=0, lr_pos=0):
-    print("y_decoder")
-    print(generator_inputs.shape)
-    layers = []
-    layers.append(generator_inputs)
-
-    layer_specs = [
-        (ngf * 2, None),  # decoder_3: [batch, 128, 128, ngf * 4] => [batch, 256, 256, ngf * 2]
-        (ngf, None),  # decoder_2: [batch, 256, 256, ngf * 2] => [batch, 512, 512, ngf]
-    ]
-
-    for decoder_layer, (out_channels, dropout) in enumerate(layer_specs):
-        with tf.variable_scope("y_decoder_%d" % (decoder_layer + 1)):
-
-            input = layers[-1]
-
-            rectified = tf.nn.relu(input)
-
-            if lr_nc > 0 and lr_pos == len(layer_specs) - decoder_layer:
-                lr_output = conv7x7(rectified, lr_nc, stride=1)
-
-            # [batch, in_height, in_width, in_channels] => [batch, in_height*2, in_width*2, out_channels]
-            if use_resize_conv:
-                output = resizeconv(rectified, out_channels)
-            else:
-                output = deconv(rectified, out_channels)
-            output = batchnorm(output)
-
-            if dropout is not None:
-                output = tf.nn.dropout(output, keep_prob=1 - dropout)
-
-            print(output.shape)
-            layers.append(output)
-
-    with tf.variable_scope("x_decoder_%d_lr" % (len(layer_specs) + 1)):
-        if lr_nc > 0 and lr_pos == 0:
-            lr_output = conv7x7(rectified, lr_nc, stride=1)
-        else:
-            lr_output = None
-
-    if output_num == 1:
-        # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
-        with tf.variable_scope("y_decoder_%d" % (len(layer_specs) + 1)):
-            input = layers[-1]
-            rectified = tf.nn.relu(input)
-            output = conv7x7(rectified, generator_outputs_channels, stride=1)
-            if activation:
-                output = activation(output)
-            layers.append(output)
-        print(output.shape)
-        if(lr_output is not None):
-            return output, lr_output
-        else:
-            return output, None
-    else:
-        layer_1 = layers[-1]
-        outputs = []
-        for i in range(output_num):
-            # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
-            with tf.variable_scope("y_decoder_%d" % (len(layer_specs) + 1) + str(i)):
-                input = layer_1
-                rectified = tf.nn.relu(input)
-                output = conv7x7(rectified, generator_outputs_channels, stride=1)
-                if activation:
-                    output = activation(output)
-                outputs.append(output)
-        outputs = tuple(outputs)
-        if (lr_output is not None):
-            return output, lr_output
-        else:
-            return outputs, None
-
-def generate_revgan_x_autoencoder(generator_inputs, generator_outputs_channels, revnet, ngf=64, dropout_prob=0.5, output_num=1,
-                              activation=tf.tanh, use_resize_conv=False, lr_inputs=None, lr_pos=0):
-    print("x autoencoder generator")
-    layers = []
-    enc_output = generate_revgan_x_encoder(generator_inputs, ngf, lr_inputs, lr_pos)
-    layers.append(enc_output)
-
-    dec_input = layers[-1]
-    dec_output, lr_output = generate_revgan_x_decoder(dec_input, generator_outputs_channels, ngf, output_num, activation, use_resize_conv)
-
-    return dec_output
-
-def generate_revgan_y_autoencoder(generator_inputs, generator_outputs_channels, revnet, ngf=64, dropout_prob=0.5, output_num=1,
-                              activation=tf.tanh, use_resize_conv=False, lr_inputs=None, lr_pos=0):
-    print("y autoencoder generator")
-    layers = []
-    enc_output = generate_revgan_y_encoder(generator_inputs, ngf, lr_inputs, lr_pos)
-    layers.append(enc_output)
-
-    dec_input = layers[-1]
-    dec_output, lr_output = generate_revgan_y_decoder(dec_input, generator_outputs_channels, ngf, output_num, activation, use_resize_conv)
-
-    return dec_output
-
-
-def generate_revgan_generator(generator_inputs, generator_outputs_channels, revnet, ngf=64, dropout_prob=0.5, output_num=1,
-                              activation=tf.tanh, use_resize_conv=False, lr_inputs=None, lr_pos=0):
-    print("forward generator")
-    layers = []
-    enc_output = generate_revgan_x_encoder(generator_inputs, ngf, lr_inputs, lr_pos)
-    layers.append(enc_output)
-
-    in_1, in_2 = tf.split(layers[-1], num_or_size_splits=2, axis=3)
-    in_1 = tf.identity(in_1, name="revnet_input_1")
-    in_2 = tf.identity(in_2, name="revnet_input_2")
-    layers.append((in_1, in_2))
-
-    revnet_input = (in_1, in_2)
-
-    revnet_output = revnet.forward_pass(revnet_input)
-
-    layers.append(revnet_output)
-
-    out_1, out_2 = layers[-1]
-    out_1 = tf.identity(out_1, name="revnet_output_1")
-    out_2 = tf.identity(out_2, name="revnet_output_2")
-    layers.append(tf.concat([out_1, out_2], 3))
-
-    dec_input = layers[-1]
-    dec_output, lr_output = generate_revgan_y_decoder(dec_input, generator_outputs_channels, ngf, output_num, activation, use_resize_conv)
-
-    return dec_output
-
-def generate_revgan_generator_backward(generator_inputs, generator_outputs_channels, revnet, ngf=64, dropout_prob=0.5, output_num=1,
-                              activation=tf.tanh, use_resize_conv=False, lr_inputs=None, lr_pos=0):
-    print("backward generator")
-    layers = []
-    enc_output = generate_revgan_y_encoder(generator_inputs, ngf, lr_inputs, lr_pos)
-    layers.append(enc_output)
-
-    in_1, in_2 = tf.split(layers[-1], num_or_size_splits=2, axis=3)
-    in_1 = tf.identity(in_1, name="backward_revnet_input_1")
-    in_2 = tf.identity(in_2, name="backward_revnet_input_2")
-    layers.append((in_1, in_2))
-
-    revnet_input = (in_1, in_2)
-
-    revnet_output = revnet.backward_pass(revnet_input)
-
-    layers.append(revnet_output)
-
-    out_1, out_2 = layers[-1]
-    out_1 = tf.identity(out_1, name="backward_revnet_output_1")
-    out_2 = tf.identity(out_2, name="backward_revnet_output_2")
-    layers.append(tf.concat([out_1, out_2], 3))
-
-    dec_input = layers[-1]
-    dec_output, lr_output = generate_revgan_x_decoder(dec_input, generator_outputs_channels, ngf, output_num, activation, use_resize_conv)
-
-    return dec_output
 
 
 def generate_unet(generator_inputs, generator_outputs_channels, ngf=64, bayesian_dropout=False, dropout_prob=0.5, output_num=1, activation=tf.tanh, use_resize_conv=False, lr_inputs=None, lr_pos=0):
@@ -1030,11 +736,12 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
     out_1 = tf.identity(out_1, name="backward_revnet_output_1")
     out_2 = tf.identity(out_2, name="backward_revnet_output_2")
     output = tf.concat([out_1, out_2], 3)
+    layers.append(output)
 
 
     layer_specs = [
-        (ngf * 2, None),   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
-        (ngf, None),       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
+        #(ngf * 4, None),   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
+        #(ngf, None),       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
     ]
 
     num_encoder_layers = len(layers)
@@ -1173,6 +880,46 @@ def generate_discriminator(discrim_inputs, discrim_targets, ndf=64, discriminato
         convolved = conv(input, ndf, stride=2)
         rectified = lrelu(convolved, 0.2)
         layers.append(rectified)
+
+    # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
+    # layer_3: [batch, 64, 64, ndf * 2] => [batch, 32, 32, ndf * 4]
+    # layer_4: [batch, 32, 32, ndf * 4] => [batch, 31, 31, ndf * 8]
+    for i in range(n_layers):
+        with tf.variable_scope("layer_%d" % (len(layers) + 1)):
+            out_channels = ndf * min(2**(i+1), 8)
+            if i>3:
+                out_channels /= min(2**(i-3), 8)
+            stride = 1 if i == n_layers - 1 else 2  # last layer here has stride 1
+            convolved = conv(layers[-1], out_channels, stride=stride)
+            normalized = batchnorm(convolved)
+            rectified = lrelu(normalized, 0.2)
+            layers.append(rectified)
+
+    # layer_5: [batch, 31, 31, ndf * 8] => [batch, 30, 30, 1]
+    with tf.variable_scope("layer_%d" % (len(layers) + 1)):
+        convolved = conv(rectified, out_channels=1, stride=1)
+        if not no_lsgan:
+            output = convolved
+        else:
+            output = tf.sigmoid(convolved)
+        layers.append(output)
+
+    return layers[-1]
+
+def generate_lr_discriminator(discrim_inputs, discrim_targets, ndf=64, discriminator_layer_num=3, no_lsgan=False):
+    n_layers = discriminator_layer_num # default value 3
+    layers = []
+
+    with tf.variable_scope("layer_1_inputs"):
+        convolved_i = conv7x7(discrim_inputs, ndf, 4)
+        rectified_i = lrelu(convolved_i, 0.2)
+
+    with tf.variable_scope("layer_1_targets"):
+        convolved_t = conv3x3(discrim_targets, ndf, 1)
+        rectified_t = lrelu(convolved_t, 0.2)
+
+    input = tf.concat([rectified_i, rectified_t], axis=3)
+    layers.append(input)
 
     # layer_2: [batch, 128, 128, ndf] => [batch, 64, 64, ndf * 2]
     # layer_3: [batch, 64, 64, ndf * 2] => [batch, 32, 32, ndf * 4]
@@ -1944,11 +1691,11 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         with tf.variable_scope("lr_discriminator"):
             # 2x [batch, height, width, channels] => [batch, 30, 30, 1]
             if use_gaussd:
-                lr_predict_real = generate_discriminator(tf_gauss_conv(outputs), tf_gauss_conv(scaled_lr_inputs), ndf,
+                lr_predict_real = generate_lr_discriminator(tf_gauss_conv(outputs), tf_gauss_conv(lr_inputs), ndf,
                                                       discriminator_layer_num=discriminator_layer_num,
                                                       no_lsgan=no_lsgan)
             else:
-                lr_predict_real = generate_discriminator(outputs, scaled_lr_inputs, ndf,
+                lr_predict_real = generate_lr_discriminator(outputs, lr_inputs, ndf,
                                                       discriminator_layer_num=discriminator_layer_num,
                                                       no_lsgan=no_lsgan)
 
@@ -1956,11 +1703,11 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         with tf.variable_scope("lr_discriminator", reuse=True):
             # 2x [batch, height, width, channels] => [batch, 30, 30, 1]
             if use_gaussd:
-                lr_predict_fake = generate_discriminator(tf_gauss_conv(outputs), tf_gauss_conv(backward_outputs_lr), ndf,
+                lr_predict_fake = generate_lr_discriminator(tf_gauss_conv(outputs), tf_gauss_conv(backward_outputs_lr), ndf,
                                                       discriminator_layer_num=discriminator_layer_num,
                                                       no_lsgan=no_lsgan)
             else:
-                lr_predict_fake = generate_discriminator(outputs, backward_outputs_lr, ndf,
+                lr_predict_fake = generate_lr_discriminator(outputs, backward_outputs_lr, ndf,
                                                       discriminator_layer_num=discriminator_layer_num,
                                                       no_lsgan=no_lsgan)
 
@@ -1989,7 +1736,8 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
     dp_targets = deprocess(targets)
     dp_backward_outputs = deprocess(backward_outputs_lr)
     dp_backward_outputs_fake = deprocess(backward_outputs_fake_lr)
-    dp_lr_input = deprocess(scaled_lr_inputs)
+    dp_lr_input = deprocess(lr_inputs)
+    dp_scaled_lr_input = deprocess(scaled_lr_inputs)
 
     with tf.name_scope("generator_loss"):
         # predict_fake => 1

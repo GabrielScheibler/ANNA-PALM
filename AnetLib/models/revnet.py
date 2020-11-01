@@ -425,24 +425,20 @@ def rev_block(in_1, in_2, weights, reverse):
             with tf.variable_scope("g"):
                 out_2 = in_2 + rev_nn(out_1, weights_g)
 
-        out_1.set_shape(in_1.get_shape())
-        out_2.set_shape(in_2.get_shape())
-
         return [out_1, out_2]
 
 
 def rev_nn(in_1, weights):
-    out = rev_conv3x3(in_1, tf.squeeze(weights[2]))
+    out = in_1
     out = rev_batchnorm(out, weights[0:2])
     out = rev_lrelu(out, 0.2)
+    out = rev_conv3x3(out, tf.squeeze(weights[2]))
     out.set_shape(in_1.get_shape())
     return out
 
 
 def rev_conv3x3(batch_input, weight):
     with tf.variable_scope("conv3x3"):
-        in_channels = batch_input.get_shape()[3]
-        out_channels = in_channels
         filter = weight
         padded_in_1 = tf.pad(batch_input, [[0, 0], [1, 1], [1, 1], [0, 0]], mode="REFLECT")
         out_1 = tf.nn.conv2d(padded_in_1, filter, [1, 1, 1, 1], padding="VALID")
@@ -467,7 +463,7 @@ def rev_batchnorm(input, weights):
         input = tf.identity(input)
         offset = weights[0]
         scale = weights[1]
-        mean, variance = tf.nn.moments(input, axes=[0, 1, 2], keep_dims=False)
+        mean, variance = tf.nn.moments(input, axes=[0, 1, 2, 3], keep_dims=True)
         variance_epsilon = 1e-5
         normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale,
                                                variance_epsilon=variance_epsilon)
