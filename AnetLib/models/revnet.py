@@ -219,7 +219,6 @@ class ReversibleNet():
         y1_grad = output_grads[0]
         y2_grad = output_grads[1]
 
-
         """
         # backprop implementation 1
         x1, x2 = rev_block(y1, y2, layer_weights, reverse=True)
@@ -358,44 +357,40 @@ class ReversibleNet():
 
         x1_grad, x2_grad = output_grads
 
-        """
-        # backprop implementation 3 - not functioning
-        with tf.variable_scope("rev_block"):
-            z2_stop = tf.stop_gradient(x2)
-            with tf.variable_scope("f"):
-                F_z2 = rev_nn(z2_stop, f_weights)
-                y1 = x1 + F_z2
-                y1_stop = tf.stop_gradient(y1)
-            with tf.variable_scope("g"):
-                G_y1 = rev_nn(z2_stop, g_weights)
-                y2 = x2 + G_y1
-                y2_stop = tf.stop_gradient(y2)
-
-        z2 = y2_stop - G_y1
-        x1 = y1_stop - F_z2
-        x2 = z2
-
-        z2_f_grad = tf.gradients(x1, [z2_stop] + f_weights, x1_grad)
-        z2_grad = z2_f_grad[0] + x2_grad
-        f_grads = z2_f_grad[1:]
-        y1_g_grad = tf.gradients(y2, [y1_stop] + g_weights, z2_grad)
-        print(y1_g_grad)
-        y1_grad = y1_g_grad[0] + x1_grad
-        g_grads = y1_g_grad[1:]
-        y2_grad = z2_grad
-
-        dw_list = list(f_grads) + list(g_grads)
-        """
-
-        # backprop implementation 2
+        """# backprop implementation 2
         y1, y2 = rev_block(x1, x2, layer_weights, reverse=False)
         y1, y2 = tf.stop_gradient(y1), tf.stop_gradient(y2)
 
         x1, x2 = rev_block(y1, y2, layer_weights, reverse=True)
 
         grads = tf.gradients([x1, x2], [y1, y2] + f_weights + g_weights, [x1_grad, x2_grad], gate_gradients=False)
-        y1_grad, y2_grad, dw_list = grads[0], grads[1], grads[2:]
+        y1_grad, y2_grad, dw_list = grads[0], grads[1], grads[2:]"""
 
+        # backprop implementation 3
+        with tf.variable_scope("rev_block"):
+            z1_stop = tf.stop_gradient(x2)
+            with tf.variable_scope("f"):
+                F_z1 = rev_nn(z1_stop, f_weights)
+                y1 = x1 + F_z1
+                y1_stop = tf.stop_gradient(y1)
+            with tf.variable_scope("g"):
+                G_y1 = rev_nn(y1_stop, g_weights)
+                y2 = x2 + G_y1
+                y2_stop = tf.stop_gradient(y2)
+
+        z1 = y2_stop - G_y1
+        x1 = y1_stop - F_z1
+        x2 = z1
+
+        z1_f_grad = tf.gradients(x1, [z1_stop] + f_weights, x1_grad)
+        z1_grad = z1_f_grad[0] + x2_grad
+        f_grads = z1_f_grad[1:]
+        y1_g_grad = tf.gradients(x2, [y1_stop] + g_weights, z1_grad)
+        y1_grad = y1_g_grad[0] + x1_grad
+        g_grads = y1_g_grad[1:]
+        y2_grad = z1_grad
+
+        dw_list = list(f_grads) + list(g_grads)
 
         inputs = (y1, y2)
         input_grads = (y1_grad, y2_grad)
