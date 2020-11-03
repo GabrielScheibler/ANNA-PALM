@@ -736,12 +736,11 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
     out_1 = tf.identity(out_1, name="backward_revnet_output_1")
     out_2 = tf.identity(out_2, name="backward_revnet_output_2")
     output = tf.concat([out_1, out_2], 3)
-    layers.append(output)
 
 
     layer_specs = [
-        #(ngf * 4, None),   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
-        #(ngf, None),       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
+        (ngf * 4, None),   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
+        (ngf, None),       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
     ]
 
     num_encoder_layers = len(layers)
@@ -760,10 +759,7 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
 
             rectified = tf.nn.relu(input)
             # [batch, in_height, in_width, in_channels] => [batch, in_height*2, in_width*2, out_channels]
-            if use_resize_conv:
-                output = resizeconv(rectified, out_channels)
-            else:
-                output = deconv(rectified, out_channels)
+            output = conv3x3(rectified, out_channels, stride=1)
             output = batchnorm(output)
 
             if bayesian_dropout and (skip_layer + 1) in [8, 7, 6, 5, 4]:
@@ -1819,7 +1815,6 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             gen_loss = gen_loss + loss_tv
 
         total_loss = gen_loss_GAN * gan_weight + gen_loss * l1_weight + gen_loss_lr * squirrel_weight
-
 
         if gen_loss_SSIM is None:
             gen_loss_SSIM = 1 - tf_ssim(dp_targets, dp_outputs, mean_metric=True, filter_size=21, filter_sigma=3)
