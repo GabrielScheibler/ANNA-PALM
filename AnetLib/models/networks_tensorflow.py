@@ -752,10 +752,7 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
                 # since it is directly connected to the skip_layer
                 input = output
             else:
-                if (use_skip_connections):
-                    input = tf.concat([layers[-1], layers[skip_layer]], axis=3)
-                else:
-                    input = layers[-1]
+                input = layers[-1]
 
             rectified = tf.nn.relu(input)
             # [batch, in_height, in_width, in_channels] => [batch, in_height*2, in_width*2, out_channels]
@@ -773,7 +770,128 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
     if output_num == 1:
         # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
         with tf.variable_scope("x_decoder_1"):
-            if (use_skip_connections):
+            input = layers[-1]
+            rectified = tf.nn.relu(input)
+            if use_resize_conv:
+                output = conv7x7(rectified, generator_outputs_channels, stride=1)
+            else:
+                output = conv7x7(rectified, generator_outputs_channels, stride=1)
+            if activation:
+                output = activation(output)
+            layers.append(output)
+        return layers[-1]
+    else:
+        layer_1 = layers[-1]
+        outputs = []
+        for i in range(output_num):
+            # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
+            with tf.variable_scope("x_decoder_1_"+str(i)):
+                input = layers[-1]
+                rectified = tf.nn.relu(input)
+                if use_resize_conv:
+                    output = conv7x7(rectified, generator_outputs_channels, stride=1)
+                else:
+                    output = conv7x7(rectified, generator_outputs_channels, stride=1)
+                if activation:
+                    output = activation(output)
+                outputs.append(output)
+        outputs = tuple(outputs)
+        return outputs
+
+
+def generate_revgan_backward_punet_biglr(generator_inputs, controls, generator_outputs_channels, ngf=64, bayesian_dropout=False, dropout_prob=0.5, output_num=1, activation=tf.tanh, use_resize_conv=False, lr_inputs=None, lr_pos=0, revnet=None, use_skip_connections=True):
+    assert controls is not None
+    layers = []
+
+    print(generator_inputs.shape)
+
+    # encoder_1: [batch, 256, 256, in_channels] => [batch, 128, 128, ngf]
+    with tf.variable_scope("y_encoder_1"):
+        if lr_inputs is not None and lr_pos == 0:
+            generator_inputs = tf.concat([generator_inputs, lr_inputs], axis=3)
+        output = conv7x7(generator_inputs, ngf, stride=1)
+        output = output + conv1x1(controls, ngf)
+        if lr_inputs is not None and lr_pos == 1:
+            layers.append( tf.concat([lr_inputs, output], axis=3))
+        else:
+            layers.append(output)
+
+    layer_specs = [
+        ngf * 2, # encoder_2: [batch, 128, 128, ngf] => [batch, 64, 64, ngf * 2]
+        ngf * 4, # encoder_3: [batch, 64, 64, ngf * 2] => [batch, 32, 32, ngf * 4]
+    ]
+
+    for out_channels in layer_specs:
+        with tf.variable_scope("y_encoder_%d" % (len(layers) + 1)):
+            rectified = lrelu(layers[-1], 0.2)
+            # [batch, in_height, in_width, in_channels] => [batch, in_height/2, in_width/2, out_channels]
+            convolved = conv(rectified, out_channels, stride=2)
+            convolved = convolved + conv1x1(controls, out_channels)
+            output = batchnorm(convolved)
+            if bayesian_dropout and (len(layers) + 1) in [8, 7, 6, 5, 4]:
+                output = tf.nn.dropout(output, keep_prob=1- dropout_prob)
+            if lr_inputs is not None and lr_pos == len(layers):
+                layers.append( tf.concat([lr_inputs, output], axis=3))
+            else:
+                layers.append(output)
+
+
+    in_1, in_2 = tf.split(layers[-1], num_or_size_splits=2, axis=3)
+    in_1 = tf.identity(in_1, name="backward_revnet_input_1")
+    in_2 = tf.identity(in_2, name="backward_revnet_input_2")
+
+    revnet_input = (in_1, in_2)
+
+    if revnet is not None:
+        revnet_output = revnet.backward_pass(revnet_input)
+    else:
+        revnet_output = revnet_input
+
+    out_1, out_2 = revnet_output
+    out_1 = tf.identity(out_1, name="backward_revnet_output_1")
+    out_2 = tf.identity(out_2, name="backward_revnet_output_2")
+    output = tf.concat([out_1, out_2], 3)
+
+
+    layer_specs = [
+        (ngf * 2, None),   # decoder_3: [batch, 32, 32, ngf * 4 * 2] => [batch, 64, 64, ngf * 2 * 2]
+        (ngf, None),       # decoder_2: [batch, 64, 64, ngf * 2 * 2] => [batch, 128, 128, ngf * 2]
+    ]
+
+    num_encoder_layers = len(layers)
+    for decoder_layer, (out_channels, dropout) in enumerate(layer_specs):
+        skip_layer = num_encoder_layers - decoder_layer - 1
+        with tf.variable_scope("x_decoder_%d" % (skip_layer + 1)):
+            if decoder_layer == 0:
+                # first decoder layer doesn't have skip connections
+                # since it is directly connected to the skip_layer
+                input = output
+            else:
+                if use_skip_connections:
+                    input = tf.concat([layers[-1], layers[skip_layer]], axis=3)
+                else:
+                    input = layers[-1]
+
+            rectified = tf.nn.relu(input)
+            # [batch, in_height, in_width, in_channels] => [batch, in_height*2, in_width*2, out_channels]
+            if use_resize_conv:
+                output = resizeconv(rectified, out_channels)
+            else:
+                output = deconv(rectified, out_channels)
+            output = batchnorm(output)
+
+            if bayesian_dropout and (skip_layer + 1) in [8, 7, 6, 5, 4]:
+                output = tf.nn.dropout(output, keep_prob=1 - dropout_prob)
+            else:
+                if dropout is not None:
+                    output = tf.nn.dropout(output, keep_prob=1 - dropout)
+
+            layers.append(output)
+
+    if output_num == 1:
+        # decoder_1: [batch, 128, 128, ngf * 2] => [batch, 256, 256, generator_outputs_channels]
+        with tf.variable_scope("x_decoder_1"):
+            if use_skip_connections:
                 input = tf.concat([layers[-1], layers[0]], axis=3)
             else:
                 input = layers[-1]
@@ -1580,7 +1698,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                         bayesian_dropout=False, use_resize_conv=False, no_lsgan=False, dropout_prob=0.5,
                         gan_weight=1.0, l1_weight=40.0, lr=0.0002, beta1=0.5, lambda_tv=0, use_ssim=False,
                         use_punet=False, control_nc=0, control_classes=0, use_gaussd=False, lr_nc=0, lr_scale=1,
-                        use_squirrel=False, squirrel_weight=20.0, lr_loss_mode='lr_inputs', rev_layer_num=10, use_skip_connections=False):
+                        use_squirrel=False, squirrel_weight=20.0, lr_loss_mode='lr_inputs', rev_layer_num=10, use_skip_connections=False, big_lr=False):
     with tf.name_scope("generator"):
         with tf.variable_scope("generator", reuse=tf.AUTO_REUSE) as scope:
             out_channels = int(targets.get_shape()[-1])
@@ -1637,18 +1755,35 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
 
                 sigma = None
 
+            if big_lr:
+                backward_outputs_lr = generate_revgan_backward_punet_biglr(targets, controls, lr_nc, ngf,
+                                                                     bayesian_dropout=bayesian_dropout,
+                                                                     dropout_prob=dropout_prob, output_num=1,
+                                                                     use_resize_conv=use_resize_conv, revnet=revnet,
+                                                                     use_skip_connections=use_skip_connections)
 
-            backward_outputs_lr = generate_revgan_backward_punet(targets, controls, lr_nc, ngf,
-                                                                 bayesian_dropout=bayesian_dropout,
-                                                                 dropout_prob=dropout_prob, output_num=1,
-                                                                 use_resize_conv=use_resize_conv, revnet=revnet,
-                                                                 use_skip_connections=use_skip_connections)
+                backward_outputs_fake_lr = generate_revgan_backward_punet_biglr(outputs, controls, lr_nc, ngf,
+                                                                  bayesian_dropout=bayesian_dropout,
+                                                                  dropout_prob=dropout_prob, output_num=1,
+                                                                  use_resize_conv=use_resize_conv, revnet=revnet,
+                                                                  use_skip_connections=use_skip_connections)
 
-            backward_outputs_fake_lr = generate_revgan_backward_punet(outputs, controls, lr_nc, ngf,
-                                                              bayesian_dropout=bayesian_dropout,
-                                                              dropout_prob=dropout_prob, output_num=1,
-                                                              use_resize_conv=use_resize_conv, revnet=revnet,
-                                                              use_skip_connections=use_skip_connections)
+                backward_outputs_lr = deprocess(tf.image.resize_images(backward_outputs_lr, size=(_h // (2 ** lr_pos), _w // (2 ** lr_pos)), method=tf.image.ResizeMethod.BILINEAR))
+                backward_outputs_fake_lr = deprocess(tf.image.resize_images(backward_outputs_fake_lr, size=(_h // (2 ** lr_pos), _w // (2 ** lr_pos)), method=tf.image.ResizeMethod.BILINEAR))
+
+            else:
+                backward_outputs_lr = generate_revgan_backward_punet(targets, controls, lr_nc, ngf,
+                                                                     bayesian_dropout=bayesian_dropout,
+                                                                     dropout_prob=dropout_prob, output_num=1,
+                                                                     use_resize_conv=use_resize_conv, revnet=revnet,
+                                                                     use_skip_connections=use_skip_connections)
+
+                backward_outputs_fake_lr = generate_revgan_backward_punet(outputs, controls, lr_nc, ngf,
+                                                                          bayesian_dropout=bayesian_dropout,
+                                                                          dropout_prob=dropout_prob, output_num=1,
+                                                                          use_resize_conv=use_resize_conv,
+                                                                          revnet=revnet,
+                                                                          use_skip_connections=use_skip_connections)
 
 
     with tf.name_scope("discriminator_inputs"):
@@ -1808,7 +1943,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                 gen_loss_L1 = tf.reduce_mean(tf.abs(targets - outputs))
                 gen_loss = gen_loss_L1
 
-        gen_loss_lr = tf_ms_ssim_l1_loss(dp_backward_outputs_fake, dp_lr_input)
+        gen_loss_lr = tf_ms_ssim_l1_loss(dp_backward_outputs_fake, dp_backward_outputs)
 
         if lambda_tv > 0:
             loss_tv = lambda_tv * tf.reduce_mean(tf.image.total_variation(outputs))
@@ -1846,12 +1981,38 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         lr_discrim_train = lr_discrim_optim.apply_gradients(lr_discrim_grads_and_vars)
 
     with tf.name_scope("generator_grads"):
+        # compute gradients for x_decoder part of backward_generator for lr reconstruction loss
+        x_dec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/x_decoder")]
+        rev_out_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_output_1_1:0")
+        rev_out_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_output_2_1:0")
+        x_dec_grads = tf.gradients(total_loss, [rev_out_1_var, rev_out_2_var] + x_dec_vars,
+                                 stop_gradients=[rev_out_1_var, rev_out_2_var])
+        rev_out_1_grad = x_dec_grads[0]
+        rev_out_2_grad = x_dec_grads[1]
+        x_dec_grads = x_dec_grads[2:]
+        x_dec_grads_and_vars = np.array(list(zip(x_dec_grads, x_dec_vars)))
+
+        # manual gradients for revnet
+        if revnet is not None and rev_layer_num > 0:
+            _, (dy1, dy2), rev_grads_and_vars = revnet.compute_revnet_gradients_of_backward_pass(rev_out_1_var,
+                                                                                                 rev_out_2_var,
+                                                                                                 rev_out_1_grad,
+                                                                                                 rev_out_2_grad)
+            rev_grads_and_vars = np.array(rev_grads_and_vars)
+        else:
+            (dy1, dy2) = (rev_out_1_grad, rev_out_2_grad)
+            rev_grads_and_vars = None
+
+        rev_in_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_input_1_1:0")
+        rev_in_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/backward_revnet_input_2_1:0")
+
+
         # compute gradients for decoder part
         dec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/y_decoder")]
         rev_out_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_output_1:0")
         rev_out_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_output_2:0")
-        dec_grads = tf.gradients(total_loss, [rev_out_1_var, rev_out_2_var] + dec_vars,
-                                 stop_gradients=[rev_out_1_var, rev_out_2_var])
+        dec_grads = tf.gradients([total_loss, rev_in_1_var, rev_in_2_var] + x_dec_vars, [rev_out_1_var, rev_out_2_var] + dec_vars, [total_loss, dy1, dy2] + x_dec_grads, stop_gradients=[rev_out_1_var, rev_out_2_var])
+        #dec_grads = tf.gradients(total_loss, [rev_out_1_var, rev_out_2_var] + dec_vars, stop_gradients=[rev_out_1_var, rev_out_2_var])
         rev_out_1_grad = dec_grads[0]
         rev_out_2_grad = dec_grads[1]
         dec_grads = dec_grads[2:]
@@ -1872,7 +2033,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         enc_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/x_encoder")]
         rev_in_1_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_input_1:0")
         rev_in_2_var = tf.get_default_graph().get_tensor_by_name("generator/generator/revnet_input_2:0")
-        enc_grads = tf.gradients([rev_in_1_var, rev_in_2_var], enc_vars, [dy1, dy2])
+        enc_grads = tf.gradients([rev_in_1_var, rev_in_2_var] + dec_vars, enc_vars, [dy1, dy2] + dec_grads)
         enc_grads_and_vars = np.array(list(zip(enc_grads, enc_vars)))
 
         # combine all gradients in one list
@@ -1881,6 +2042,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         else:
             gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
         gen_grads_and_vars = gen_grads_and_vars.tolist()
+
 
     with tf.name_scope("backward_generator_grads"):
         # compute gradients for decoder part
@@ -1914,7 +2076,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
 
         # combine all gradients in one list
         if rev_grads_and_vars is not None:
-            bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
+            bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
         else:
             bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
         bw_gen_grads_and_vars = bw_gen_grads_and_vars.tolist()
