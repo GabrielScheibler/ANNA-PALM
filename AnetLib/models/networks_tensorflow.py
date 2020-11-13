@@ -1293,6 +1293,7 @@ def create_unet_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
 def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, output_uncertainty=False, bayesian_dropout=False, use_resize_conv=False,
                       dropout_prob=0.5, lr=0.0002, beta1=0.5, lambda_tv=0, use_ssim=False, use_punet=False,
                       control_nc=0, control_classes=0, use_squirrel=False, squirrel_weight=0.5, lr_nc=0, lr_scale=1, lr_loss_mode='lr_inputs'):
+
     with tf.variable_scope("generator") as scope:
         out_channels = int(targets.get_shape()[-1])
         if use_punet:
@@ -1345,7 +1346,7 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
 
     with tf.name_scope("generator_train_p"):
         # compute gradients for decoder part
-        lossp = tf.reduce_mean(tf.square(1 - outpputs))
+        lossp = tf.reduce_mean(tf.square(outpputs))
 
         dec_vars = [var for var in tf.trainable_variables() if var.name.startswith("generator/")]
         dec_grads = tf.gradients(lossp,dec_vars)
@@ -1359,7 +1360,7 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
     with tf.name_scope("generator_train"):
 
         # compute gradients for decoder part
-        loss = tf.reduce_mean(tf.square(1 - outputs))
+        loss = tf.reduce_mean(tf.square(outputs))
 
         rev_out_1_var = out_11
         rev_out_2_var = out_22
@@ -1382,10 +1383,13 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
 
         rev_grads_and_vars = np.array(rev_grads_and_vars)
         rev_vars = rev_grads_and_vars[:, 1]
-        rev_grads = rev_grads_and_vars[:, 0]
+        rev_grads = rev_grads_and_vars[:, 0].tolist()
+        rev_grads = [(tf.clip_by_value(grad, -100., 100.)) for grad in rev_grads]
+        rev_grads, _ = tf.clip_by_global_norm(rev_grads, 5.0)
+        rev_grads_and_vars = list(zip(rev_grads, rev_vars))
         #print(rev_vars)
 
-        gen_grads_and_vars = rev_grads_and_vars.tolist()
+        gen_grads_and_vars = rev_grads_and_vars
 
         dependencies = rev_grads + rev_vars + gen_grads + gen_vars
         with tf.control_dependencies(dependencies):
@@ -1451,7 +1455,7 @@ def create_test_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64, 
         gen_loss_L2=grad_diff2,
         gen_loss_SSIM=None,
         gen_loss_squirrel=None,
-        gen_grads_and_vars=None,
+        gen_grads_and_vars=gen_grads_and_vars,
         losses = {'gen_loss': None, 'discrim_loss': None,
                   'gen_loss_L1': None, 'gen_loss_L2': None,
                   'gen_loss_SSIM': None, 'gen_loss_squirrel': None,
@@ -2043,7 +2047,12 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             gen_grads_and_vars = np.concatenate((dec_grads_and_vars, rev_grads_and_vars, enc_grads_and_vars), axis=0)
         else:
             gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
-        gen_grads_and_vars = gen_grads_and_vars.tolist()
+
+        # gradient clipping
+        gen_grads, gen_vars = gen_grads_and_vars[:, 0], gen_grads_and_vars[:, 1]
+        gen_grads = [(tf.clip_by_value(grad, -100., 100.)) for grad in gen_grads]
+        gen_grads, _ = tf.clip_by_global_norm(gen_grads, 5.0)
+        gen_grads_and_vars = list(zip(gen_grads, gen_vars))
 
 
     with tf.name_scope("backward_generator_grads"):
@@ -2081,7 +2090,12 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
             bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
         else:
             bw_gen_grads_and_vars = np.concatenate((dec_grads_and_vars, enc_grads_and_vars), axis=0)
-        bw_gen_grads_and_vars = bw_gen_grads_and_vars.tolist()
+
+        # gradient clipping
+        bw_gen_grads, bw_gen_vars = bw_gen_grads_and_vars[:, 0], bw_gen_grads_and_vars[:, 1]
+        bw_gen_grads = [(tf.clip_by_value(grad, -100., 100.)) for grad in bw_gen_grads]
+        bw_gen_grads, _ = tf.clip_by_global_norm(bw_gen_grads, 5.0)
+        bw_gen_grads_and_vars = list(zip(bw_gen_grads, bw_gen_vars))
 
 
     with tf.name_scope("forward_generator_train"):
