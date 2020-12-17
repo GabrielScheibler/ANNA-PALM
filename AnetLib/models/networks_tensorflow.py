@@ -23,7 +23,7 @@ INPUT_SWITCH_POS = 0
 CTRL_CHANNEL_POS = 1
 Model = collections.namedtuple("Model", "type, outputs, targets, uncertainty, predict_real, predict_fake, inputs, lr_inputs, lr_predict_real, lr_predict_fake, squirrel_error_map, squirrel_discrim_loss, squirrel_discrim_grads_and_vars, discrim_loss, discrim_grads_and_vars, gen_loss_GAN, gen_loss, gen_loss_L1, gen_loss_L2, gen_loss_SSIM, gen_loss_squirrel, losses, gen_grads_and_vars, squirrel_discrim_train, train")
 
-def tf_scale(image, range_lim=1):
+def tf_scale(image, range_lim=1.0):
     mn = tf.reduce_min(image, axis=(0, 1, 2), keepdims=True)
     mx = tf.reduce_max(image, axis=(0, 1, 2), keepdims=True)
     return (image - mn) / tf.maximum(range_lim, (mx - mn))
@@ -2455,6 +2455,13 @@ def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_r
         with tf.name_scope("loss_fetches"):
             loss_fetches = {k:v for k, v in model.losses.items() if v is not None}
 
+        if outputs is not None and targets is not None:
+            on = tf_scale(outputs, 1.0)
+            tn = tf_scale(outputs, 1.0)
+            loss_fetches["MS_SSIM_measure"] = tf_ms_ssim(on, tn, mean_metric=True)
+            loss_fetches["L1_measure"] = tf.reduce_mean(tf.abs(outputs-targets))
+            loss_fetches["L2_measure"] = tf.reduce_mean(tf.square(outputs-targets))
+
         # summaries
         with tf.name_scope("inputs_summary"):
             tf.summary.image("inputs", convert(inputs, scale=True))
@@ -2507,6 +2514,21 @@ def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_r
             with tf.name_scope("parameter_count"):
                 parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in tf.trainable_variables()])
                 tf.summary.scalar("parameter_count", parameter_count)
+
+        if outputs is not None and targets is not None:
+            with tf.name_scope("ms-ssim-test"):
+                ms_ssim_test = tf_ms_ssim(outputs, targets, mean_metric=True)
+                tf.summary.scalar("ms-ssim-test", ms_ssim_test)
+
+        if outputs is not None and targets is not None:
+            with tf.name_scope("l2-test"):
+                l2_value = tf.reduce_mean(tf.square(outputs-targets))
+                tf.summary.scalar("l2-test", l2_value)
+
+        if outputs is not None and targets is not None:
+            with tf.name_scope("l1-test"):
+                l1_value = tf.reduce_mean(tf.abs(outputs-targets))
+                tf.summary.scalar("l1-test", l1_value)
 
         if model.gen_loss_squirrel is not None:
             tf.summary.scalar("generator_loss_squirrel", model.gen_loss_squirrel)

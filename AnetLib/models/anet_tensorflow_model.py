@@ -495,6 +495,16 @@ class AnetModel():
 
         options = tf.RunOptions(timeout_in_ms=500000)
         max_steps = min(steps_per_epoch, max_steps)
+        ssim_loss_sum = 0
+        ssim_loss_cnt = 0
+        ssim_sum = 0
+        ssim_cnt = 0
+        l1_sum = 0
+        l1_cnt = 0
+        l2_sum = 0
+        l2_cnt = 0
+
+
 
         for step in range(max_steps):
             outputsList = []
@@ -514,6 +524,19 @@ class AnetModel():
                 print('')
                 lastInputs = results['inputs']
                 outputsList.append(results['outputs'])
+                ssim_loss_sum += results['gen_loss_SSIM']
+                ssim_loss_cnt += 1
+                ssim_sum += results['SSIM_measure']
+                ssim_cnt += 1
+                l2_sum += results['L2_measure']
+                l2_cnt += 1
+                l1_sum += results['L1_measure']
+                l1_cnt += 1
+                print("ssim_mean:\t" + str(ssim_sum / ssim_cnt))
+                print("ssim_loss_mean:\t" + str(ssim_loss_sum / ssim_loss_cnt))
+                print("l2_mean:\t" + str(l2_sum / l2_cnt))
+                print("l1_mean:\t" + str(l1_sum / l1_cnt))
+
                 if 'aleatoric_uncertainty' in results:
                     uncertaintyList.append(results['aleatoric_uncertainty'])
                 if repeat_callback:
