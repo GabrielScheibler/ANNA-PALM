@@ -27,6 +27,7 @@ class BaseOptions():
         self.parser.add_argument('--lr_sigma', type=int, default=8,  help='the gaussian blurring simga used to generate pseudo low resolution image')
         self.parser.add_argument('--ngf', type=int, default=64, help='# of gen filters in first conv layer')
         self.parser.add_argument('--ndf', type=int, default=64, help='# of discrim filters in first conv layer')
+        self.parser.add_argument('--nrl', type=int, default=0, help='# of layers in the revnet component')
         self.parser.add_argument('--which_model_netD', type=str, default='basic', help='selects model to use for netD')
         self.parser.add_argument('--which_model_netG', type=str, default='unet_256', help='selects model to use for netG')
         self.parser.add_argument('--n_layers_D', type=int, default=3, help='only used if which_model_netD==n_layers')
@@ -110,8 +111,8 @@ class BaseOptions():
                 
         if self.opt.tb_dir is None:
             self.opt.tb_dir = self.opt.checkpoints_dir
-            if os.path.exists(os.path.join(self.opt.tb_dir, '__model__')):
-                self.opt.tb_dir = os.path.join(self.opt.tb_dir, '__model__')
+            if not os.path.exists(self.opt.tb_dir):
+                os.makedirs(self.opt.tb_dir)
 
         if self.opt.dataroot is None:
             self.opt.dataroot = self.opt.workdir

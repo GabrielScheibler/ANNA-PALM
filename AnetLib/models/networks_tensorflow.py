@@ -2240,7 +2240,7 @@ def setup_data_loader(data_source, enqueue_data, shuffle=True, batch_size=1, inp
 def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_resize_conv=False, include_summary=True, ndf=64, ngf=64,
                   gan_weight=1.0, l1_weight=40.0, lr=0.0002, beta1=0.5, lambda_tv=0, norm_A=None, norm_B=None, norm_LR=None,
                   control_nc=0, control_classes=0, lr_nc=0, lr_scale=1, squirrel_weight=20.0, use_gaussd=False, lr_loss_mode='lr_inputs',
-                  use_queue=True):
+                  use_queue=True, rev_layer_num=0):
     if norm_A is None:
         norm_A = 'mean_std'
     if norm_B is None:
@@ -2291,7 +2291,7 @@ def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_r
     if model_type == 'a_net' or model_type == 'anet':
         model = create_pix2pix_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, gan_weight=gan_weight, l1_weight=l1_weight, lr=lr, beta1=beta1, lambda_tv=lambda_tv, use_ssim='ms_ssim_l1', use_punet=True, control_nc=control_nc, control_classes=control_classes, use_gaussd=use_gaussd, lr_nc=lr_nc, lr_scale=lr_scale, use_squirrel=lr_nc>0, lr_loss_mode=lr_loss_mode, squirrel_weight=squirrel_weight)
     elif model_type == 'revgan':
-        model = create_revgan_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, gan_weight=gan_weight, l1_weight=l1_weight, lr=lr, beta1=beta1, lambda_tv=lambda_tv, use_ssim='ms_ssim_l1', use_punet=True, control_nc=control_nc, control_classes=control_classes, use_gaussd=use_gaussd, lr_nc=lr_nc, lr_scale=lr_scale, use_squirrel=0, lr_loss_mode=lr_loss_mode, squirrel_weight=squirrel_weight)
+        model = create_revgan_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, gan_weight=gan_weight, l1_weight=l1_weight, lr=lr, beta1=beta1, lambda_tv=lambda_tv, use_ssim='ms_ssim_l1', use_punet=True, control_nc=control_nc, control_classes=control_classes, use_gaussd=use_gaussd, lr_nc=lr_nc, lr_scale=lr_scale, use_squirrel=0, lr_loss_mode=lr_loss_mode, squirrel_weight=squirrel_weight, rev_layer_num=rev_layer_num)
     elif model_type == 'unet':
         model = create_unet_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, lr=lr, beta1=beta1, lambda_tv=lambda_tv)
     elif model_type == 'punet':

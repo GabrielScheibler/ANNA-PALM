@@ -65,7 +65,7 @@ class AnetModel():
                                        control_nc=opt.control_nc, control_classes=opt.control_classes,
                                        lr_nc=opt.lr_nc, lr_scale=opt.lr_scale, squirrel_weight=opt.lambda_LR,
                                        norm_A=self.opt.norm_A, norm_B=self.opt.norm_B, norm_LR=self.opt.norm_LR,
-                                       use_gaussd=opt.use_gaussd, lr_loss_mode=self.opt.lr_loss_mode, use_queue=not opt.no_queue)
+                                       use_gaussd=opt.use_gaussd, lr_loss_mode=self.opt.lr_loss_mode, use_queue=not opt.no_queue, rev_layer_num=opt.nrl)
         self.model, queue_funcs, self.display_fetches, losses, self.summary_merged = model
         enqueue_data, close_queue = queue_funcs
         self.loss_fetches, self.averaged_loss_fetches = losses

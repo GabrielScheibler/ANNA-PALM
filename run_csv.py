@@ -11,8 +11,8 @@ opt.fineSize = 512
 opt.batchSize = 1  # batchSize = 1
 opt.model = 'revgan_tensorflow'
 opt.dim_ordering = 'channels_last'
-opt.display_freq = 50
-opt.save_latest_freq = 10000000000
+opt.display_freq = 1000
+opt.save_latest_freq = 10000
 opt.use_resize_conv = True
 opt.norm_A = 'mean_std'
 opt.norm_B = 'min_max[0,1]'
@@ -27,8 +27,9 @@ opt.add_data_type_control = True
 opt.add_lr_channel = False
 opt.use_random_channel_mask = True
 opt.lr_loss_mode = 'lr_predict'
-opt.ngf = 64
-opt.ndf = 64
+opt.ngf = 16
+opt.ndf = 16
+opt.nrl = 10
 
 now = datetime.now()
 opt.tb_dir = os.path.join(opt.tb_dir, "log_" + now.strftime("%Y%m%d-%H%M%S"))
