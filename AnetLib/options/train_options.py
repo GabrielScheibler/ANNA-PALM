@@ -20,6 +20,7 @@ class Options(BaseOptions):
         self.parser.add_argument('--lambda_A', type=float, default=20.0, help='weight for generator loss or for cycle loss (A -> B -> A)')
         self.parser.add_argument('--lambda_B', type=float, default=20.0, help='weight for cycle loss (B -> A -> B)')
         self.parser.add_argument('--lambda_G', type=float, default=1.0, help='weight for GAN loss')
+        self.parser.add_argument('--lambda_G_LR', type=float, default=1.0, help='weight for LR GAN loss')
         self.parser.add_argument('--lambda_LR', type=float, default=20.0, help='weight for LR image with squirrel loss')
         self.parser.add_argument('--lr_loss_mode', type=str, default='lr_input', help='weight for LR image with squirrel loss, lr_input or lr_predict')
         self.parser.add_argument('--identity', type=float, default=0.0, help='use identity mapping. Setting identity other than 1 has an effect of scaling the weight of the identity mapping loss. For example, if the weight of the identity loss should be 10 times smaller than the weight of the reconstruction loss, please set optidentity = 0.1')

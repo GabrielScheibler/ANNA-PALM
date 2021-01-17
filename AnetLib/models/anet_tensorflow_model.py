@@ -65,7 +65,7 @@ class AnetModel():
                                        control_nc=opt.control_nc, control_classes=opt.control_classes,
                                        lr_nc=opt.lr_nc, lr_scale=opt.lr_scale, squirrel_weight=opt.lambda_LR,
                                        norm_A=self.opt.norm_A, norm_B=self.opt.norm_B, norm_LR=self.opt.norm_LR,
-                                       use_gaussd=opt.use_gaussd, lr_loss_mode=self.opt.lr_loss_mode, use_queue=not opt.no_queue, rev_layer_num=opt.nrl)
+                                       use_gaussd=opt.use_gaussd, lr_loss_mode=self.opt.lr_loss_mode, use_queue=not opt.no_queue, rev_layer_num=opt.nrl, bw_gan_weight=opt.lambda_G_LR)
         self.model, queue_funcs, self.display_fetches, losses, self.summary_merged = model
         enqueue_data, close_queue = queue_funcs
         self.loss_fetches, self.averaged_loss_fetches = losses
@@ -495,14 +495,12 @@ class AnetModel():
 
         options = tf.RunOptions(timeout_in_ms=500000)
         max_steps = min(steps_per_epoch, max_steps)
-        ssim_loss_sum = 0
-        ssim_loss_cnt = 0
-        ssim_sum = 0
-        ssim_cnt = 0
-        l1_sum = 0
-        l1_cnt = 0
-        l2_sum = 0
-        l2_cnt = 0
+        msssim_sum = 0
+        msssim_cnt = 0
+        mse_sum = 0
+        mse_cnt = 0
+        mae_sum = 0
+        mae_cnt = 0
 
 
 
@@ -524,18 +522,15 @@ class AnetModel():
                 print('')
                 lastInputs = results['inputs']
                 outputsList.append(results['outputs'])
-                ssim_loss_sum += results['gen_loss_SSIM']
-                ssim_loss_cnt += 1
-                ssim_sum += results['SSIM_measure']
-                ssim_cnt += 1
-                l2_sum += results['L2_measure']
-                l2_cnt += 1
-                l1_sum += results['L1_measure']
-                l1_cnt += 1
-                print("ssim_mean:\t" + str(ssim_sum / ssim_cnt))
-                print("ssim_loss_mean:\t" + str(ssim_loss_sum / ssim_loss_cnt))
-                print("l2_mean:\t" + str(l2_sum / l2_cnt))
-                print("l1_mean:\t" + str(l1_sum / l1_cnt))
+                msssim_sum += results['MS_SSIM_measure']
+                msssim_cnt += 1
+                mse_sum += results['MSE_measure']
+                mse_cnt += 1
+                mae_sum += results['MAE_measure']
+                mae_cnt += 1
+                print("ms_ssim_mean:\t" + str(msssim_sum / msssim_cnt))
+                print("mse_mean:\t" + str(mse_sum / mse_cnt))
+                print("mae_mean:\t" + str(mae_sum / mae_cnt))
 
                 if 'aleatoric_uncertainty' in results:
                     uncertaintyList.append(results['aleatoric_uncertainty'])

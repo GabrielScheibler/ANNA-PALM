@@ -133,7 +133,7 @@ def batchnorm(input):
         channels = input.get_shape()[3]
         offset = tf.get_variable("offset", [channels], dtype=tf.float32, initializer=tf.zeros_initializer())
         scale = tf.get_variable("scale", [channels], dtype=tf.float32, initializer=tf.random_normal_initializer(1.0, 0.02))
-        mean, variance = tf.nn.moments(input, axes=[0, 1, 2, 3], keep_dims=True)
+        mean, variance = tf.nn.moments(input, axes=[0, 1, 2], keep_dims=False)
         variance_epsilon = 1e-5
         normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale, variance_epsilon=variance_epsilon)
         return normalized
@@ -160,6 +160,17 @@ def batchnorm2(inputs, is_training, decay = 0.999):
         return tf.nn.batch_normalization(inputs,
             pop_mean, pop_var, beta, scale, epsilon)
 
+def layernorm(input):
+    with tf.variable_scope("batchnorm"):
+        # this block looks like it has 3 inputs on the graph unless we do this
+        input = tf.identity(input)
+        channels = input.get_shape()[3]
+        offset = tf.get_variable("offset", [channels], dtype=tf.float32, initializer=tf.zeros_initializer())
+        scale = tf.get_variable("scale", [channels], dtype=tf.float32, initializer=tf.random_normal_initializer(1.0, 0.02))
+        mean, variance = tf.nn.moments(input, axes=[0, 1, 2, 3], keep_dims=True)
+        variance_epsilon = 1e-5
+        normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale, variance_epsilon=variance_epsilon)
+        return normalized
 
 def deconv(batch_input, out_channels):
     with tf.variable_scope("deconv"):
@@ -586,7 +597,7 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
             # [batch, in_height, in_width, in_channels] => [batch, in_height/2, in_width/2, out_channels]
             convolved = conv(rectified, out_channels, stride=2)
             convolved = convolved + conv1x1(controls, out_channels)
-            output = batchnorm(convolved)
+            output = layernorm(convolved)
             if bayesian_dropout and (len(layers) + 1) in [8, 7, 6, 5, 4]:
                 output = tf.nn.dropout(output, keep_prob=1- dropout_prob)
             if lr_inputs is not None and lr_pos == len(layers):
@@ -637,7 +648,7 @@ def generate_revgan_punet(generator_inputs, controls, generator_outputs_channels
                 output = resizeconv(rectified, out_channels)
             else:
                 output = deconv(rectified, out_channels)
-            output = batchnorm(output)
+            output = layernorm(output)
 
             if bayesian_dropout and (skip_layer + 1) in [8, 7, 6, 5, 4]:
                 output = tf.nn.dropout(output, keep_prob=1 - dropout_prob)
@@ -712,7 +723,7 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
             # [batch, in_height, in_width, in_channels] => [batch, in_height/2, in_width/2, out_channels]
             convolved = conv(rectified, out_channels, stride=2)
             convolved = convolved + conv1x1(controls, out_channels)
-            output = batchnorm(convolved)
+            output = layernorm(convolved)
             if bayesian_dropout and (len(layers) + 1) in [8, 7, 6, 5, 4]:
                 output = tf.nn.dropout(output, keep_prob=1- dropout_prob)
             if lr_inputs is not None and lr_pos == len(layers):
@@ -757,7 +768,7 @@ def generate_revgan_backward_punet(generator_inputs, controls, generator_outputs
             rectified = tf.nn.relu(input)
             # [batch, in_height, in_width, in_channels] => [batch, in_height*2, in_width*2, out_channels]
             output = conv3x3(rectified, out_channels, stride=1)
-            output = batchnorm(output)
+            output = layernorm(output)
 
             if bayesian_dropout and (skip_layer + 1) in [8, 7, 6, 5, 4]:
                 output = tf.nn.dropout(output, keep_prob=1 - dropout_prob)
@@ -827,7 +838,7 @@ def generate_revgan_backward_punet_biglr(generator_inputs, controls, generator_o
             # [batch, in_height, in_width, in_channels] => [batch, in_height/2, in_width/2, out_channels]
             convolved = conv(rectified, out_channels, stride=2)
             convolved = convolved + conv1x1(controls, out_channels)
-            output = batchnorm(convolved)
+            output = layernorm(convolved)
             if bayesian_dropout and (len(layers) + 1) in [8, 7, 6, 5, 4]:
                 output = tf.nn.dropout(output, keep_prob=1- dropout_prob)
             if lr_inputs is not None and lr_pos == len(layers):
@@ -878,7 +889,7 @@ def generate_revgan_backward_punet_biglr(generator_inputs, controls, generator_o
                 output = resizeconv(rectified, out_channels)
             else:
                 output = deconv(rectified, out_channels)
-            output = batchnorm(output)
+            output = layernorm(output)
 
             if bayesian_dropout and (skip_layer + 1) in [8, 7, 6, 5, 4]:
                 output = tf.nn.dropout(output, keep_prob=1 - dropout_prob)
@@ -1702,7 +1713,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
                         bayesian_dropout=False, use_resize_conv=False, no_lsgan=False, dropout_prob=0.5,
                         gan_weight=1.0, l1_weight=40.0, lr=0.0002, beta1=0.5, lambda_tv=0, use_ssim=False,
                         use_punet=False, control_nc=0, control_classes=0, use_gaussd=False, lr_nc=0, lr_scale=1,
-                        use_squirrel=False, squirrel_weight=20.0, lr_loss_mode='lr_inputs', rev_layer_num=10, use_skip_connections=False, big_lr=False):
+                        use_squirrel=False, squirrel_weight=20.0, lr_loss_mode='lr_inputs', rev_layer_num=10, bw_gan_weight=1.0, use_skip_connections=False, big_lr=False):
 
     with tf.variable_scope("generator", reuse=tf.AUTO_REUSE) as scope:
         with tf.variable_scope("revnet", reuse=tf.AUTO_REUSE) as scope:
@@ -1974,7 +1985,7 @@ def create_revgan_model(inputs, targets, controls, channel_masks, ngf=64, ndf=64
         mask = tf.cond(cond, lambda: tf.constant(0.0), lambda: tf.constant(1.0))
         bw_gen_loss_SSIM = mask * tf_ms_ssim_l1_loss(dp_backward_outputs, dp_lr_input)
 
-        bw_gen_loss_total = bw_gen_loss_GAN * gan_weight + bw_gen_loss_SSIM * l1_weight
+        bw_gen_loss_total = bw_gen_loss_GAN * bw_gan_weight + bw_gen_loss_SSIM * l1_weight
 
     with tf.name_scope("discriminator_train"):
         discrim_tvars = [var for var in tf.trainable_variables() if var.name.startswith("discriminator")]
@@ -2240,7 +2251,7 @@ def setup_data_loader(data_source, enqueue_data, shuffle=True, batch_size=1, inp
 def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_resize_conv=False, include_summary=True, ndf=64, ngf=64,
                   gan_weight=1.0, l1_weight=40.0, lr=0.0002, beta1=0.5, lambda_tv=0, norm_A=None, norm_B=None, norm_LR=None,
                   control_nc=0, control_classes=0, lr_nc=0, lr_scale=1, squirrel_weight=20.0, use_gaussd=False, lr_loss_mode='lr_inputs',
-                  use_queue=True, rev_layer_num=0):
+                  use_queue=True, rev_layer_num=0, bw_gan_weight=1.0):
     if norm_A is None:
         norm_A = 'mean_std'
     if norm_B is None:
@@ -2291,7 +2302,7 @@ def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_r
     if model_type == 'a_net' or model_type == 'anet':
         model = create_pix2pix_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, gan_weight=gan_weight, l1_weight=l1_weight, lr=lr, beta1=beta1, lambda_tv=lambda_tv, use_ssim='ms_ssim_l1', use_punet=True, control_nc=control_nc, control_classes=control_classes, use_gaussd=use_gaussd, lr_nc=lr_nc, lr_scale=lr_scale, use_squirrel=lr_nc>0, lr_loss_mode=lr_loss_mode, squirrel_weight=squirrel_weight)
     elif model_type == 'revgan':
-        model = create_revgan_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, gan_weight=gan_weight, l1_weight=l1_weight, lr=lr, beta1=beta1, lambda_tv=lambda_tv, use_ssim='ms_ssim_l1', use_punet=True, control_nc=control_nc, control_classes=control_classes, use_gaussd=use_gaussd, lr_nc=lr_nc, lr_scale=lr_scale, use_squirrel=0, lr_loss_mode=lr_loss_mode, squirrel_weight=squirrel_weight, rev_layer_num=rev_layer_num)
+        model = create_revgan_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, gan_weight=gan_weight, l1_weight=l1_weight, lr=lr, beta1=beta1, lambda_tv=lambda_tv, use_ssim='ms_ssim_l1', use_punet=True, control_nc=control_nc, control_classes=control_classes, use_gaussd=use_gaussd, lr_nc=lr_nc, lr_scale=lr_scale, use_squirrel=0, lr_loss_mode=lr_loss_mode, squirrel_weight=squirrel_weight, rev_layer_num=rev_layer_num, bw_gan_weight=bw_gan_weight)
     elif model_type == 'unet':
         model = create_unet_model(inputs_batch, targets_batch, control_batch, channel_mask_batch, ngf=ngf, ndf=ndf, dropout_prob=dropout_prob, bayesian_dropout=False, use_resize_conv=use_resize_conv, lr=lr, beta1=beta1, lambda_tv=lambda_tv)
     elif model_type == 'punet':
@@ -2456,11 +2467,9 @@ def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_r
             loss_fetches = {k:v for k, v in model.losses.items() if v is not None}
 
         if outputs is not None and targets is not None:
-            on = tf_scale(outputs, 1.0)
-            tn = tf_scale(outputs, 1.0)
-            loss_fetches["MS_SSIM_measure"] = tf_ms_ssim(on, tn, mean_metric=True)
-            loss_fetches["L1_measure"] = tf.reduce_mean(tf.abs(outputs-targets))
-            loss_fetches["L2_measure"] = tf.reduce_mean(tf.square(outputs-targets))
+            loss_fetches["MS_SSIM_measure"] = tf_ms_ssim(outputs, targets, weights=[0.2, 0.2, 0.2, 0.2, 0.2], mean_metric=True)
+            loss_fetches["MAE_measure"] = tf.reduce_mean(tf.abs(outputs-targets))
+            loss_fetches["MSE_measure"] = tf.reduce_mean(tf.square(outputs-targets))
 
         # summaries
         with tf.name_scope("inputs_summary"):
