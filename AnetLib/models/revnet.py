@@ -458,7 +458,7 @@ def rev_batchnorm(input, weights):
         input = tf.identity(input)
         offset = weights[0]
         scale = weights[1]
-        mean, variance = tf.nn.moments(input, axes=[0, 1, 2, 3], keep_dims=True)
+        mean, variance = tf.nn.moments(input, axes=[0, 1, 2, 3], keep_dims=False)
         variance_epsilon = 1e-5
         normalized = tf.nn.batch_normalization(input, mean, variance, offset, scale,
                                                variance_epsilon=variance_epsilon)
@@ -488,6 +488,6 @@ def rev_conv3x3_weights(channels, weights):
 
 def rev_batchnorm_weights(channels, weights):
     with tf.variable_scope("batchnorm"):
-        weights.append(tf.get_variable("offset", [channels], dtype=tf.float32, initializer=tf.zeros_initializer()))
-        weights.append(tf.get_variable("scale", [channels], dtype=tf.float32, initializer=tf.random_normal_initializer(1.0, 0.02)))
+        weights.append(tf.get_variable("offset", [], dtype=tf.float32, initializer=tf.zeros_initializer()))
+        weights.append(tf.get_variable("scale", [], dtype=tf.float32, initializer=tf.random_normal_initializer(1.0, 0.02)))
         return weights
