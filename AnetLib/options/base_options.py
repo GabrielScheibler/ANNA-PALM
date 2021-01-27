@@ -96,13 +96,13 @@ class BaseOptions():
                 self.opt.save_dir = os.path.join(self.opt.workdir, self.opt.name)
             else:
                 self.opt.save_dir = os.path.join(self.opt.workdir, 'outputs')
-            if not os.path.exists(self.opt.save_dir):
-                os.makedirs(self.opt.save_dir)
+        if not os.path.exists(self.opt.save_dir):
+            os.makedirs(self.opt.save_dir)
 
         if self.opt.checkpoints_dir is None:
             self.opt.checkpoints_dir = os.path.join(self.opt.workdir, '__model__')
-            if not os.path.exists(self.opt.checkpoints_dir):
-                os.makedirs(self.opt.checkpoints_dir)
+        if not os.path.exists(self.opt.checkpoints_dir):
+            os.makedirs(self.opt.checkpoints_dir)
 
         if self.opt.load_dir is None:
             self.opt.load_dir = self.opt.checkpoints_dir
