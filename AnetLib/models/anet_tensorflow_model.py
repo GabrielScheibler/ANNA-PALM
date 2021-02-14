@@ -614,7 +614,7 @@ class AnetModel():
                     argparse_dict = vars(self.opt)
                     if k in ['model', 'norm_A', 'input_nc', 'output_nc', 'ngf', 'ndf',
                               'use_resize_conv', 'control_nc', 'control_classes',
-                              'add_data_type_channel', 'lr_scale', 'lr_nc', 'use_gaussd']:
+                              'add_data_type_channel', 'lr_scale', 'lr_nc', 'use_gaussd', 'nrl']:
                         if k in config_json:
                             if k in argparse_dict and argparse_dict[k] != config_json[k]:
                                 print("WARNING: {}={} is different in config.json ({}={})".format(k, argparse_dict[k], k, config_json[k]))
