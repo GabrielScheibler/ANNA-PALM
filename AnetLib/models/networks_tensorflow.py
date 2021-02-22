@@ -2524,21 +2524,6 @@ def build_network(model_type, input_size, input_nc, output_nc, batch_size, use_r
                 parameter_count = tf.reduce_sum([tf.reduce_prod(tf.shape(v)) for v in tf.trainable_variables()])
                 tf.summary.scalar("parameter_count", parameter_count)
 
-        if outputs is not None and targets is not None:
-            with tf.name_scope("ms-ssim-test"):
-                ms_ssim_test = tf_ms_ssim(outputs, targets, mean_metric=True)
-                tf.summary.scalar("ms-ssim-test", ms_ssim_test)
-
-        if outputs is not None and targets is not None:
-            with tf.name_scope("l2-test"):
-                l2_value = tf.reduce_mean(tf.square(outputs-targets))
-                tf.summary.scalar("l2-test", l2_value)
-
-        if outputs is not None and targets is not None:
-            with tf.name_scope("l1-test"):
-                l1_value = tf.reduce_mean(tf.abs(outputs-targets))
-                tf.summary.scalar("l1-test", l1_value)
-
         if model.gen_loss_squirrel is not None:
             tf.summary.scalar("generator_loss_squirrel", model.gen_loss_squirrel)
 

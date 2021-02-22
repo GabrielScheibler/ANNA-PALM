@@ -368,9 +368,16 @@ class TransformedCSVImages(TransformedTubulinImages004):
             lrin = np.zeros_like(histin)
         else:
             lrin = random.choice(LRs).astype('float32')
-        histin = np.concatenate([histin, lrin], axis=2)
+        img = self.iMerge([histin, lrin, histout])
+        img = self.iRCropTrain(img)
+        img = self.iRot(img)
+        histin, histout = self.iSplit(img)
         output_clip = self.output_clip
-        histout =  (np.clip(histout, output_clip[0]/2, output_clip[1]*2)-output_clip[0]) / (output_clip[1] - output_clip[0])
+        histout = (np.clip(histout, output_clip[0] / 2, output_clip[1] * 2) - output_clip[0]) / (output_clip[1] - output_clip[0])
+        # imgin, imgout = self.iCropTest(histin), self.iCropTest(histout)
+        # histin = np.concatenate([histin, lrin], axis=2)
+        # output_clip = self.output_clip
+        # histout =  (np.clip(histout, output_clip[0]/2, output_clip[1]*2)-output_clip[0]) / (output_clip[1] - output_clip[0])
         imgin, imgout = self.iCropTest(histin), self.iCropTest(histout)
         if self.dim_ordering == 'channels_first':
             imgin, imgout = imgin.transpose((2, 0, 1)), imgout.transpose((2, 0, 1))
